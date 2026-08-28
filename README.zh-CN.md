@@ -2,17 +2,71 @@
 
 [English](README.md) | 中文
 
-evolution-system 是 workflow-self-recursive 的 Evolution System —— 补上整个项目 meta-recursive 闭环的最后一块拼图。它从 Evidence 获取 Workflow 在 Execution 中运行的客观事实，进行归因，并有针对性地改进 Workflow；改进后的 Workflow 再次进入 Execution 运行，产生新的客观事实，如此往复，直到客观评价达到用户为 evo 设定的目标。
+evolution-system 是 workflow-self-recursive 的无状态 Metric Result 服务。它把
+`EvaluationSelection` 解析到 Evidence，绑定 owner 已批准的 Evaluation Catalog 2.0 评审候选，并返回
+`ResolvedEvaluationContext` receipt 与权威 Metric Results。compare 请求分别携带左右
+selection；两侧结果和所有兼容 delta 均由 Evolution 计算。
 
-其他组件在闭环中有固定分工 —— Workflow Package 定义运行什么、Execution 运行它并发出事实、Evidence 记录事实 —— 而 evolution-system 拥有反馈这一环：归因、评价与对 Workflow 的有针对性修订。
+Evolution 只通过带版本的 Evidence Query API 读取 Facts 与 recorded Traces。它不拥有
+Evidence、不持久化数据库、不回写 Metric Result，也不推断未记录因果。BI 是展示客户
+端，不计算 published metrics。
 
-## Developer preview
+Iteration 5 明确不包含 Workflow 编辑、改进应用、AI 归因和 meta-recursive loop；它们是
+后续产品范围，不是本服务基线的职责。
 
-本仓库是 workflow-self-recursive 架构优先开发者预览版的一部分，适用于个人或小团队的可信本地环境。Evolution 是五个 workstream 中最新的一个，其详细设计仍落在父仓库中，尚未提供可供最终用户运行的发行版。**后续会有破坏兼容性的变更。**
+## 开发者预览
+
+当前候选提供封闭、无副作用的 compute 边界、精确的 12-coordinate registry、12/12
+candidate metric pure formula、typed Evidence/Workflow resolver，以及端到端
+SINGLE/FULL_COMPARE/PARTIAL_COMPARE 编排。每个成功 side 都返回恰好 12 项 Metric
+Results 与绑定 resolved read set 的 receipt；单项 coverage 空洞不会使其他结果失败。
+JSON wire 将 authoritative integer value/count 序列化为 canonical decimal string，因此 browser
+client 能保留超过 `2^53-1` 的 Python integer 精度。`coverage` 字段始终存在：Evolution
+能建立候选总体时包含五个字段，无法建立 denominator 时显式为 `null`。已知候选总体为空
+仍使用五字段 `NO_POPULATION` 对象并令 `raw_ratio: null`；不适用的 `alert` 也显式为 `null`。
+
+当前 public Fact projection 仍不暴露 Usage Event native Span identity，因此 call-scoped
+Usage input 会产生显式 missing coverage；绝不按 Delivery identity、timestamp、arrival
+order 或文本猜关联。Role-template rework 改为描述性的 Delivery/template exposure：accepted
+Manifest 与 recorded C30 选择精确 template，同 Delivery 的有效 `FINDING_FIX` relationship
+表示发生过 rework；它不把因果归于 template、reviewer 或 writer。
+
+Resolution safety limit 全部可配置。默认每 side 500 个 unique Delivery、每次 traversal 20
+页、每 side 100,000 条 Fact+Trace record、side deadline 120 秒。超过边界会显式令该 side
+失败，绝不静默截断。2.0 Catalog 仍是 review candidate，**正式发布前仍可能发生破坏兼容性的变更。**
+
+## 开发
+
+支持 Python 3.13 与 3.14。依赖锁定和构建由 [uv](https://docs.astral.sh/uv/) 管理；
+本地命令默认使用 Python 3.14。
+
+```sh
+make sync    # 安装精确锁定的环境
+make format  # 格式化 Python 源码与测试
+make lint    # 格式、Ruff 与严格 mypy
+make unit    # 运行无需外部服务的确定性测试
+make build   # 构建 wheel 与源码包
+make check   # 运行非容器验收门
+```
+
+## 本地 runtime image
+
+Image 同时绑定 Evolution source 与 pinned Workflow DSL 2.0 candidate checker，因此必须从
+superproject root 构建：
+
+```sh
+docker build -f evolution-system/Dockerfile -t wsr-evolution:local .
+```
+
+Process 要求 `WSR_EVOLUTION_CONFIG` 指向 mounted closed JSON file。以
+`deployment/evolution.example.json` 为起点，按期望尝试顺序配置一到八个 public GitHub
+source；需要时只能降低其中的 safety limits。该文件没有 database/provider credential 字段。
+Container port `8000` 只在私网使用；`GET /healthz` 仅证明 local process liveness。
 
 ## 获取源码
 
-本仓库通常作为 [workflow-self-recursive](https://github.com/firestige/workflow-self-recursive) 的 submodule 使用：
+本仓库通常作为 [workflow-self-recursive](https://github.com/firestige/workflow-self-recursive)
+的 submodule 使用：
 
 ```sh
 git clone --recurse-submodules https://github.com/firestige/workflow-self-recursive.git
@@ -26,10 +80,9 @@ git clone https://github.com/firestige/evolution-system.git
 
 ## 文档
 
-- [概念架构](https://github.com/firestige/workflow-self-recursive/blob/main/docs/agent-architecture.zh-CN.md) —— 产品目的与 meta-recursive 语境
-- [Evidence System 设计](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/evidence/evidence-system.zh-CN.md) —— 本 System 消费的客观事实来源
-- [Execution System 设计](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/execution/project-execution-system.zh-CN.md) —— 修订后的 Workflow 在哪里运行
-- [Workflow 组合模型](https://github.com/firestige/workflow-self-recursive/blob/main/docs/workflow-composition-model.md) —— Workflow 修订针对的对象
+- [Evolution System 设计](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/evolution/evolution-system.zh-CN.md)
+- [Metric Catalog 2.0 评审候选](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evaluation/metric-catalog-2-candidate.zh-CN.md)
+- [Evidence Query Contract](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evidence-query/evidence-query.zh-CN.md)
 
 ## License
 
