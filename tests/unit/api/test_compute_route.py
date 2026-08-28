@@ -7,6 +7,7 @@ from wsr_evolution.api.models import (
     CatalogBinding,
     Coverage,
     EvaluationSelection,
+    EvidenceBinding,
     MetricResult,
     MetricSlice,
     ResolvedEvaluationContext,
@@ -26,14 +27,30 @@ def fixed_response() -> SingleResponse:
         selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
         as_of=datetime(2026, 8, 28, 1, 0, tzinfo=UTC),
         resolved_at=datetime(2026, 8, 28, 1, 1, tzinfo=UTC),
-        task_population=(TaskPopulationEntry(task_id="task-a", memberships=()),),
+        task_population=(
+            TaskPopulationEntry(
+                task_id="task-a",
+                memberships=(),
+                exclusions=("UNDEFINED_TASK_MEMBERSHIP",),
+            ),
+        ),
         catalog=CatalogBinding(
             catalog_id="agentops.evaluation.metric-catalog",
             version="1.0.0",
             semantic_digest="6dbb4375507a3a2eebbe5e86bb6f0a40ebf811790f55ee841b15c6942e1f159d",
             observation_profile="1.0.0",
         ),
-        evidence_bindings=(),
+        evidence_bindings=(
+            EvidenceBinding(
+                route="/v1/evidence/tasks",
+                canonical_filter={"task_id": "task-a", "as_of": "2026-08-28T01:00:00Z"},
+                contract_revision="1.0.0",
+                observation_profile="2.0.0",
+                read_model_revision="2.0.0",
+                route_snapshot="task-snapshot-a",
+                completion_state="COMPLETE",
+            ),
+        ),
         input_refs=(),
         population_state="COMPLETE",
     )
