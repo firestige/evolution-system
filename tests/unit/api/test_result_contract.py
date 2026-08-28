@@ -87,7 +87,10 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
         evidence_bindings=(
             EvidenceBinding(
                 route="/v1/evidence/tasks",
-                canonical_filter={"task_id": "task-a", "as_of": "2026-08-28T01:00:00Z"},
+                canonical_filter={
+                    "task_id": "task-a",
+                    "as_of": "2026-08-28T01:00:00.000000Z",
+                },
                 contract_revision="1.0.0",
                 observation_profile="2.0.0",
                 read_model_revision="2.0.0",
@@ -96,7 +99,10 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
             ),
             EvidenceBinding(
                 route="/v1/evidence/tasks",
-                canonical_filter={"task_id": "task-b", "as_of": "2026-08-28T01:00:00Z"},
+                canonical_filter={
+                    "task_id": "task-b",
+                    "as_of": "2026-08-28T01:00:00.000000Z",
+                },
                 contract_revision="1.0.0",
                 observation_profile="2.0.0",
                 read_model_revision="2.0.0",
@@ -297,7 +303,10 @@ def minimal_context(task_id: str) -> ResolvedEvaluationContext:
         evidence_bindings=(
             EvidenceBinding(
                 route="/v1/evidence/tasks",
-                canonical_filter={"task_id": task_id, "as_of": "2026-08-28T01:00:00Z"},
+                canonical_filter={
+                    "task_id": task_id,
+                    "as_of": "2026-08-28T01:00:00.000000Z",
+                },
                 contract_revision="1.0.0",
                 observation_profile="2.0.0",
                 read_model_revision="2.0.0",
@@ -306,7 +315,7 @@ def minimal_context(task_id: str) -> ResolvedEvaluationContext:
             ),
         ),
         input_refs=(),
-        population_state="COMPLETE",
+        population_state="OPEN",
     )
 
 
@@ -346,6 +355,48 @@ def test_receipt_rejects_route_revision_or_selection_population_mismatch() -> No
             **{
                 **context.model_dump(),
                 "task_population": (),
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "canonical_filter",
+    (
+        {"task_id": "task-a"},
+        {"task_id": "task-a", "as_of": "2026-08-28T00:59:59.000000Z"},
+        {"task_id": "task-a", "as_of": "2026-08-28T01:00:00Z"},
+        {
+            "task_id": "task-a",
+            "as_of": "2026-08-28T01:00:00.000000Z",
+            "unexpected": "filter",
+        },
+    ),
+)
+def test_receipt_requires_exact_task_membership_filter(
+    canonical_filter: dict[str, str],
+) -> None:
+    context = minimal_context("task-a")
+    binding = context.evidence_bindings[0].model_copy(update={"canonical_filter": canonical_filter})
+
+    with pytest.raises(ValidationError):
+        ResolvedEvaluationContext(**{**context.model_dump(), "evidence_bindings": (binding,)})
+
+
+def test_complete_population_requires_complete_task_traversal_and_membership() -> None:
+    context = minimal_context("task-a")
+
+    with pytest.raises(ValidationError):
+        ResolvedEvaluationContext(**{**context.model_dump(), "population_state": "COMPLETE"})
+
+    partial = context.evidence_bindings[0].model_copy(
+        update={"completion_state": "PARTIAL", "error_state": "CURSOR_EXPIRED"}
+    )
+    with pytest.raises(ValidationError):
+        ResolvedEvaluationContext(
+            **{
+                **context.model_dump(),
+                "evidence_bindings": (partial,),
+                "population_state": "COMPLETE",
             }
         )
 

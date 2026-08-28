@@ -43,7 +43,10 @@ def fixed_response() -> SingleResponse:
         evidence_bindings=(
             EvidenceBinding(
                 route="/v1/evidence/tasks",
-                canonical_filter={"task_id": "task-a", "as_of": "2026-08-28T01:00:00Z"},
+                canonical_filter={
+                    "task_id": "task-a",
+                    "as_of": "2026-08-28T01:00:00.000000Z",
+                },
                 contract_revision="1.0.0",
                 observation_profile="2.0.0",
                 read_model_revision="2.0.0",
@@ -52,7 +55,7 @@ def fixed_response() -> SingleResponse:
             ),
         ),
         input_refs=(),
-        population_state="COMPLETE",
+        population_state="OPEN",
     )
     results = tuple(
         MetricResult(
