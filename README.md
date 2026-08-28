@@ -2,17 +2,46 @@
 
 English | [中文](README.zh-CN.md)
 
-evolution-system is the Evolution System of workflow-self-recursive — the piece that closes the project's meta-recursive loop. It reads the objective facts Evidence recorded about how a Workflow ran in Execution, attributes outcomes to their causes, and applies targeted improvements to the Workflow. The revised Workflow then runs in Execution again to produce new objective facts, and the loop repeats until the objective evaluation reaches the goal the user set for evolution.
+evolution-system is workflow-self-recursive's stateless Metric Result service. It
+resolves an `EvaluationSelection` against Evidence, binds the exact published
+Evaluation Catalog, and returns a `ResolvedEvaluationContext` receipt together
+with authoritative Metric Results. Compare requests contain independent left and
+right selections; Evolution computes both sides and every compatible delta.
 
-The other components split the loop into fixed roles — Workflow Packages define what runs, Execution runs it and emits facts, Evidence records them — while evolution-system owns the feedback leg: attribution, evaluation, and the targeted revision of Workflows.
+Evolution reads Facts and recorded Traces through the versioned Evidence Query
+API. It does not own Evidence, persist a database, write Metric Results back, or
+infer unrecorded causality. BI is its presentation client and does not calculate
+published metrics.
+
+Iteration 5 deliberately excludes Workflow editing, improvement application, AI
+attribution, and the meta-recursive loop. Those remain later product scope rather
+than responsibilities of this service baseline.
 
 ## Developer preview
 
-This repository is part of workflow-self-recursive's architecture-first developer preview for trusted local use by individuals and small teams. The Evolution workstream is the newest of the five, and its detailed design still lands in the parent repository; it does not yet provide a runnable end-user release. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
+The current candidate exposes a closed, side-effect-free compute boundary and one
+isolated Python calculator slot for each of the 14 published metric coordinates.
+The slots do not yet implement metric formulas or traverse a live Evidence
+service. **Compatibility-breaking changes remain possible before publication.**
+
+## Development
+
+Python 3.13 and 3.14 are supported. Dependencies and builds are locked with
+[uv](https://docs.astral.sh/uv/); local commands default to Python 3.14.
+
+```sh
+make sync    # install the exact locked environment
+make format  # format Python sources and tests
+make lint    # formatting, Ruff, and strict mypy
+make unit    # deterministic tests without external services
+make build   # build wheel and source distribution
+make check   # run the non-container acceptance gate
+```
 
 ## Get the source
 
-This repository is normally consumed as a submodule of [workflow-self-recursive](https://github.com/firestige/workflow-self-recursive):
+This repository is normally consumed as a submodule of
+[workflow-self-recursive](https://github.com/firestige/workflow-self-recursive):
 
 ```sh
 git clone --recurse-submodules https://github.com/firestige/workflow-self-recursive.git
@@ -26,10 +55,9 @@ git clone https://github.com/firestige/evolution-system.git
 
 ## Documentation
 
-- [Conceptual architecture](https://github.com/firestige/workflow-self-recursive/blob/main/docs/agent-architecture.md) — product purpose and the meta-recursive context
-- [Evidence System design](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/evidence/evidence-system.md) — the objective facts this System consumes
-- [Execution System design](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/execution/project-execution-system.md) — where revised Workflows run
-- [Workflow composition model](https://github.com/firestige/workflow-self-recursive/blob/main/docs/workflow-composition-model.md) — what a Workflow revision targets
+- [Evolution System design](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/evolution/evolution-system.md)
+- [Metric Catalog](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evaluation/metric-catalog.md)
+- [Evidence Query Contract](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evidence-query/evidence-query.md)
 
 ## License
 
