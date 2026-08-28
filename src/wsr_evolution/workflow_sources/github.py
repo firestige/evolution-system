@@ -111,7 +111,7 @@ def _descriptor(
 ) -> _Descriptor | None:
     try:
         value = _strict_json(body)
-    except ValueError, UnicodeError, json.JSONDecodeError:
+    except (ValueError, UnicodeError, json.JSONDecodeError):
         return None
     root = _object(
         value,
