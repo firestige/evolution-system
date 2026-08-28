@@ -227,6 +227,23 @@ def minimal_context(task_id: str) -> ResolvedEvaluationContext:
     )
 
 
+def test_task_population_accepts_the_observation_display_name_bound() -> None:
+    assert (
+        TaskPopulationEntry(
+            task_id="task-a",
+            display_name="n" * 160,
+            delivery_ids=("delivery-a",),
+        ).display_name
+        == "n" * 160
+    )
+    with pytest.raises(ValidationError):
+        TaskPopulationEntry(
+            task_id="task-a",
+            display_name="n" * 161,
+            delivery_ids=("delivery-a",),
+        )
+
+
 def unavailable_result(coordinate: str) -> MetricResult:
     metric_id, metric_version = coordinate.rsplit("@", 1)
     assert metric_version == "1.0.0"
