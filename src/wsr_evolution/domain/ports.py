@@ -23,6 +23,8 @@ class TaskMembershipSummary:
     manifest_digest: str
     accepted_digest: str
     profile_version: str
+    source_identity: str
+    recorded_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

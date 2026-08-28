@@ -13,6 +13,7 @@ from wsr_evolution.api.models import (
     SideResult,
     SingleRequest,
     SingleResponse,
+    TaskPopulationEntry,
 )
 from wsr_evolution.app import create_app
 from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
@@ -25,7 +26,7 @@ def fixed_response() -> SingleResponse:
         selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
         as_of=datetime(2026, 8, 28, 1, 0, tzinfo=UTC),
         resolved_at=datetime(2026, 8, 28, 1, 1, tzinfo=UTC),
-        task_population=(),
+        task_population=(TaskPopulationEntry(task_id="task-a", memberships=()),),
         catalog=CatalogBinding(
             catalog_id="agentops.evaluation.metric-catalog",
             version="1.0.0",

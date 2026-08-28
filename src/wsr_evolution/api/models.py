@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -180,7 +181,10 @@ class MetricResult(ClosedModel):
 class TaskMembershipReference(ClosedModel):
     delivery_id: str = Field(min_length=1, max_length=256)
     manifest_digest: Digest
-    provenance_ref: str = Field(min_length=1, max_length=512)
+    accepted_digest: Digest
+    profile_version: Literal["2.0.0"]
+    source_identity: str = Field(min_length=1, max_length=512)
+    recorded_at: datetime
 
 
 class TaskPopulationEntry(ClosedModel):
@@ -230,6 +234,17 @@ class EvidenceBinding(ClosedModel):
             raise ValueError("complete Evidence traversal cannot carry an error")
         if self.completion_state != "COMPLETE" and self.error_state is None:
             raise ValueError("partial or expired Evidence traversal requires an error")
+        expected = (
+            ("1.0.0", "2.0.0", "2.0.0")
+            if self.route == "/v1/evidence/tasks"
+            else ("0.1.0", "1.0.0", "1.0.0")
+        )
+        if (
+            self.contract_revision,
+            self.observation_profile,
+            self.read_model_revision,
+        ) != expected:
+            raise ValueError("Evidence coordinates are incompatible with the selected route")
         return self
 
 
@@ -273,6 +288,8 @@ class ResolvedEvaluationContext(ClosedModel):
         reference_keys = [(item.kind, item.identity) for item in references]
         if len({item.task_id for item in population}) != len(population):
             raise ValueError("task_population must be duplicate-free")
+        if {item.task_id for item in population} != set(self.selection.task_ids):
+            raise ValueError("task_population must resolve every selected Task exactly once")
         if len(set(binding_keys)) != len(binding_keys):
             raise ValueError("evidence_bindings must be duplicate-free")
         if len(set(reference_keys)) != len(reference_keys):
@@ -328,8 +345,20 @@ class DeltaEntry(ClosedModel):
         if self.state == "AVAILABLE":
             if self.value is None or self.withholding_reason is not None or self.direction is None:
                 raise ValueError("available Delta requires value without withholding")
+            if self.value.kind == "BOOLEAN":
+                raise ValueError("boolean values do not have an arithmetic Delta")
+            numeric = (
+                Decimal(self.value.value)
+                if isinstance(self.value.value, str)
+                else Decimal(self.value.value)
+            )
+            expected = "INCREASE" if numeric > 0 else "DECREASE" if numeric < 0 else "NO_CHANGE"
+            if self.direction != expected:
+                raise ValueError("Delta direction must match the exact value sign")
         elif self.value is not None or self.direction is not None:
             raise ValueError("withheld Delta cannot contain a value or direction")
+        elif self.state == "WITHHELD" and self.withholding_reason is None:
+            raise ValueError("withheld Delta requires a typed reason")
         return self
 
 
@@ -363,6 +392,18 @@ class CompareResponse(ClosedModel):
             raise ValueError("Delta metric/slice identities must be unique")
         results = sum(item.tag == "SIDE_RESULT" for item in (self.left, self.right))
         result_sides = [item for item in (self.left, self.right) if item.tag == "SIDE_RESULT"]
+        side_slices = []
+        for side in result_sides:
+            side_slices.append(
+                {
+                    (
+                        f"{result.metric_id}@{result.metric_version}",
+                        json.dumps(metric_slice.slice_key, sort_keys=True, separators=(",", ":")),
+                    ): metric_slice
+                    for result in side.metric_results
+                    for metric_slice in result.slices
+                }
+            )
         expected = {
             (
                 f"{result.metric_id}@{result.metric_version}",
@@ -374,6 +415,21 @@ class CompareResponse(ClosedModel):
         }
         if set(by_key) != expected:
             raise ValueError("compare must contain one Delta entry per resolved metric slice")
+        if len(side_slices) == 2:
+            for key, delta in by_key.items():
+                before = side_slices[0].get(key)
+                after = side_slices[1].get(key)
+                compatible = (
+                    before is not None
+                    and after is not None
+                    and before.value is not None
+                    and after.value is not None
+                    and before.value.kind == after.value.kind
+                    and before.value.unit == after.value.unit
+                    and before.compatibility == after.compatibility
+                )
+                if (delta.state == "AVAILABLE") != compatible:
+                    raise ValueError("Delta availability must match paired value compatibility")
         catalog_order = {coordinate: index for index, coordinate in enumerate(CATALOG_COORDINATES)}
         ordered = tuple(
             by_key[key]
