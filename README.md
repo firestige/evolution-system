@@ -58,6 +58,20 @@ make build   # build wheel and source distribution
 make check   # run the non-container acceptance gate
 ```
 
+## Local runtime image
+
+Build from the superproject root because the image binds both Evolution source and the pinned Workflow
+DSL 2.0 candidate checker:
+
+```sh
+docker build -f evolution-system/Dockerfile -t wsr-evolution:local .
+```
+
+The process requires `WSR_EVOLUTION_CONFIG` to name a mounted closed JSON file. Start from
+`deployment/evolution.example.json`, keep one to eight public GitHub sources in the order they should
+be tried, and lower the included safety limits only when needed. The file has no database or provider
+credential field. Container port `8000` is private; `GET /healthz` proves only local process liveness.
+
 ## Get the source
 
 This repository is normally consumed as a submodule of
