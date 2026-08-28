@@ -24,7 +24,11 @@ from wsr_evolution.api.models import (
     WorkflowResolutionAttempt,
     WorkflowResolutionEntry,
 )
-from wsr_evolution.catalog import CATALOG_COORDINATES
+from wsr_evolution.catalog import (
+    CATALOG_COORDINATES,
+    CATALOG_SEMANTIC_DIGEST,
+    CATALOG_VERSION,
+)
 
 
 def coverage(
@@ -42,6 +46,31 @@ def coverage(
         state=state,
         alert=alert,
     )
+
+
+def test_catalog_binding_is_exactly_the_review_candidate() -> None:
+    binding = CatalogBinding(
+        catalog_id="agentops.evaluation.metric-catalog",
+        version=CATALOG_VERSION,
+        semantic_digest=CATALOG_SEMANTIC_DIGEST,
+        observation_profile="1.0.0",
+    )
+    assert binding.version == "2.0.0"
+
+    with pytest.raises(ValidationError):
+        CatalogBinding.model_validate(
+            {
+                **binding.model_dump(),
+                "semantic_digest": "0" * 64,
+            }
+        )
+    with pytest.raises(ValidationError):
+        CatalogBinding.model_validate(
+            {
+                **binding.model_dump(),
+                "version": "1.0.0",
+            }
+        )
 
 
 def workflow_resolution(manifest_digest: str) -> WorkflowResolutionEntry:
@@ -110,8 +139,8 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
         ),
         catalog=CatalogBinding(
             catalog_id="agentops.evaluation.metric-catalog",
-            version="1.0.0",
-            semantic_digest="6dbb4375507a3a2eebbe5e86bb6f0a40ebf811790f55ee841b15c6942e1f159d",
+            version=CATALOG_VERSION,
+            semantic_digest=CATALOG_SEMANTIC_DIGEST,
             observation_profile="1.0.0",
         ),
         evidence_bindings=(
@@ -216,8 +245,8 @@ def test_receipt_rejects_global_snapshot_or_manifest_fields(unknown: str) -> Non
         ],
         "catalog": {
             "catalog_id": "agentops.evaluation.metric-catalog",
-            "version": "1.0.0",
-            "semantic_digest": "6dbb4375507a3a2eebbe5e86bb6f0a40ebf811790f55ee841b15c6942e1f159d",
+            "version": CATALOG_VERSION,
+            "semantic_digest": CATALOG_SEMANTIC_DIGEST,
             "observation_profile": "1.0.0",
         },
         "evidence_bindings": [],
@@ -356,7 +385,7 @@ def test_metric_result_rejects_duplicate_or_noncanonical_slice_keys() -> None:
     )
     result = MetricResult(
         metric_id="delivery-terminal-outcome-rate",
-        metric_version="1.0.0",
+        metric_version=CATALOG_VERSION,
         slices=(slice_b, slice_a),
     )
 
@@ -365,7 +394,7 @@ def test_metric_result_rejects_duplicate_or_noncanonical_slice_keys() -> None:
     with pytest.raises(ValidationError):
         MetricResult(
             metric_id="delivery-terminal-outcome-rate",
-            metric_version="1.0.0",
+            metric_version=CATALOG_VERSION,
             slices=(slice_a, slice_a),
         )
 
@@ -412,8 +441,8 @@ def minimal_context(task_id: str) -> ResolvedEvaluationContext:
         ),
         catalog=CatalogBinding(
             catalog_id="agentops.evaluation.metric-catalog",
-            version="1.0.0",
-            semantic_digest="6dbb4375507a3a2eebbe5e86bb6f0a40ebf811790f55ee841b15c6942e1f159d",
+            version=CATALOG_VERSION,
+            semantic_digest=CATALOG_SEMANTIC_DIGEST,
             observation_profile="1.0.0",
         ),
         evidence_bindings=(
@@ -601,8 +630,8 @@ def test_receipt_rejects_membership_after_as_of_or_without_offset() -> None:
 
 def unavailable_result(coordinate: str) -> MetricResult:
     metric_id, metric_version = coordinate.rsplit("@", 1)
-    assert metric_version == "1.0.0"
-    bound_version = cast(Literal["1.0.0"], metric_version)
+    assert metric_version == "2.0.0"
+    bound_version = cast(Literal["2.0.0"], metric_version)
     return MetricResult(
         metric_id=metric_id,
         metric_version=bound_version,
@@ -631,10 +660,10 @@ def side_result(task_id: str) -> SideResult:
     )
 
 
-def test_successful_side_requires_exact_fourteen_catalog_coordinates() -> None:
+def test_successful_side_requires_exact_twelve_candidate_coordinates() -> None:
     response = SingleResponse(api_version=1, mode="SINGLE", result=side_result("task-a"))
 
-    assert len(response.result.metric_results) == 14
+    assert len(response.result.metric_results) == 12
     assert (
         tuple(
             f"{result.metric_id}@{result.metric_version}"
@@ -671,7 +700,7 @@ def test_partial_compare_retains_successful_side_and_all_unresolved_deltas() -> 
 
     assert response.left.tag == "SIDE_RESULT"
     assert response.right.tag == "SIDE_ERROR"
-    assert len(response.deltas) == 14
+    assert len(response.deltas) == 12
 
     with pytest.raises(ValidationError):
         CompareResponse(
@@ -733,7 +762,7 @@ def test_full_compare_requires_one_delta_per_exact_metric_slice() -> None:
         deltas=tuple(deltas),
     )
 
-    assert len(response.deltas) == 15
+    assert len(response.deltas) == 13
     with pytest.raises(ValidationError):
         CompareResponse(
             api_version=1,

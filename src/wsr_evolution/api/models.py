@@ -209,7 +209,7 @@ class MetricSlice(ClosedModel):
 
 class MetricResult(ClosedModel):
     metric_id: str = Field(min_length=1, max_length=128)
-    metric_version: Literal["1.0.0"]
+    metric_version: Literal["2.0.0"]
     slices: tuple[MetricSlice, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -270,8 +270,10 @@ class TaskPopulationEntry(ClosedModel):
 
 class CatalogBinding(ClosedModel):
     catalog_id: Literal["agentops.evaluation.metric-catalog"]
-    version: Literal["1.0.0"]
-    semantic_digest: Digest
+    version: Literal["2.0.0"]
+    semantic_digest: Literal[
+        "f1071c20b38c3b09d1c883e116d64b4d72288d7c00b645165086907ca1d2cb2f"
+    ]
     observation_profile: Literal["1.0.0"]
 
 
@@ -484,7 +486,7 @@ class SideResult(ClosedModel):
         if len(by_coordinate) != len(self.metric_results):
             raise ValueError("metric result coordinates must be unique")
         if set(by_coordinate) != set(CATALOG_COORDINATES):
-            raise ValueError("successful side must contain the exact fourteen catalog coordinates")
+            raise ValueError("successful side must contain the exact twelve catalog coordinates")
         object.__setattr__(
             self,
             "metric_results",
