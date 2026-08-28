@@ -63,6 +63,7 @@ CanonicalDecimal = Annotated[
     StringConstraints(pattern=r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*)(?:\.[0-9]+)?$"),
 ]
 Digest = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+PrefixedDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[a-f0-9]{64}$")]
 TruthState = Literal[
     "AVAILABLE",
     "LOWER_BOUND",
@@ -266,6 +267,82 @@ class InputReference(ClosedModel):
     provenance_ref: str = Field(min_length=1, max_length=512)
 
 
+class WorkflowResolutionAttempt(ClosedModel):
+    source_id: str | None = Field(default=None, min_length=1, max_length=128)
+    source_index: StrictInt | None = Field(default=None, ge=0, le=7)
+    code: Literal[
+        "NOT_FOUND",
+        "SOURCE_UNAVAILABLE",
+        "INVALID_DESCRIPTOR",
+        "CHECKSUM_MISMATCH",
+        "INVALID_ARCHIVE",
+        "INVALID_WORKFLOW",
+        "PACKAGE_DIGEST_MISMATCH",
+        "SNAPSHOT_DIGEST_MISMATCH",
+        "ROLE_BINDING_MISMATCH",
+        "DEADLINE_EXCEEDED",
+        "ATTEMPTS_TRUNCATED",
+    ]
+    message: str | None = Field(default=None, max_length=160)
+    omitted_count: StrictInt | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_attempt_coordinates(self) -> Self:
+        resolver_level = self.code in {"DEADLINE_EXCEEDED", "ATTEMPTS_TRUNCATED"}
+        if resolver_level == (self.source_id is not None or self.source_index is not None):
+            raise ValueError("attempt source coordinates do not match diagnostic scope")
+        if (self.code == "ATTEMPTS_TRUNCATED") != (self.omitted_count is not None):
+            raise ValueError("attempt omitted_count applicability mismatch")
+        if self.code == "ATTEMPTS_TRUNCATED" and self.omitted_count != 2:
+            raise ValueError("bounded eight-source truncation must omit exactly two diagnostics")
+        return self
+
+
+class WorkflowResolutionEntry(ClosedModel):
+    manifest_digest: Digest
+    manifest_projection_digest: Digest
+    accepted_digest: Digest
+    profile_version: Literal["2.0.0"]
+    source_identity: str = Field(min_length=1, max_length=512)
+    package_name: str = Field(min_length=1, max_length=128)
+    exact_package_version: str = Field(min_length=1, max_length=32)
+    package_digest: PrefixedDigest
+    workflow_id: str = Field(min_length=1, max_length=128)
+    workflow_version: str = Field(min_length=1, max_length=32)
+    snapshot_id: str = Field(min_length=1, max_length=128)
+    snapshot_digest: PrefixedDigest
+    state: Literal["AVAILABLE", "NOT_FOUND", "UNAVAILABLE", "INCOMPATIBLE"]
+    matched_source_id: str | None = Field(default=None, min_length=1, max_length=128)
+    matched_source_index: StrictInt | None = Field(default=None, ge=0, le=7)
+    matched_repository: str | None = Field(default=None, min_length=3, max_length=201)
+    validated_archive_digest: PrefixedDigest | None = None
+    validated_package_digest: PrefixedDigest | None = None
+    validated_snapshot_digest: PrefixedDigest | None = None
+    attempts: tuple[WorkflowResolutionAttempt, ...] = Field(max_length=8)
+
+    @model_validator(mode="after")
+    def validate_resolution_state(self) -> Self:
+        matched = (
+            self.matched_source_id,
+            self.matched_source_index,
+            self.matched_repository,
+            self.validated_archive_digest,
+            self.validated_package_digest,
+            self.validated_snapshot_digest,
+        )
+        if self.state == "AVAILABLE":
+            if any(value is None for value in matched):
+                raise ValueError("available Workflow resolution requires complete source proof")
+            if (
+                self.validated_package_digest != self.package_digest
+                or self.validated_snapshot_digest != self.snapshot_digest
+            ):
+                raise ValueError("validated Workflow digests must match expected coordinates")
+        elif any(value is not None for value in matched):
+            raise ValueError("unresolved Workflow entry cannot claim a matched source")
+        return self
+
+
 class ResolvedEvaluationContext(ClosedModel):
     context_version: Literal[1]
     selection: EvaluationSelection
@@ -275,6 +352,7 @@ class ResolvedEvaluationContext(ClosedModel):
     catalog: CatalogBinding
     evidence_bindings: tuple[EvidenceBinding, ...]
     input_refs: tuple[InputReference, ...]
+    workflow_resolutions: tuple[WorkflowResolutionEntry, ...] = ()
     population_state: Literal["COMPLETE", "PARTIAL", "OPEN", "MIXED", "EXPIRED"]
 
     @model_validator(mode="after")
@@ -293,6 +371,9 @@ class ResolvedEvaluationContext(ClosedModel):
         )
         references = tuple(
             sorted(self.input_refs, key=lambda item: (item.kind.encode(), item.identity.encode()))
+        )
+        workflow_resolutions = tuple(
+            sorted(self.workflow_resolutions, key=lambda item: item.manifest_digest.encode())
         )
         binding_keys = [
             (item.route, json.dumps(item.canonical_filter, sort_keys=True)) for item in bindings
@@ -330,9 +411,18 @@ class ResolvedEvaluationContext(ClosedModel):
             raise ValueError("evidence_bindings must be duplicate-free")
         if len(set(reference_keys)) != len(reference_keys):
             raise ValueError("input_refs must be duplicate-free")
+        membership_manifests = {
+            membership.manifest_digest for task in population for membership in task.memberships
+        }
+        resolution_manifests = {item.manifest_digest for item in workflow_resolutions}
+        if len(resolution_manifests) != len(workflow_resolutions):
+            raise ValueError("workflow_resolutions must be duplicate-free")
+        if resolution_manifests != membership_manifests:
+            raise ValueError("every membership Manifest requires one Workflow resolution entry")
         object.__setattr__(self, "task_population", population)
         object.__setattr__(self, "evidence_bindings", bindings)
         object.__setattr__(self, "input_refs", references)
+        object.__setattr__(self, "workflow_resolutions", workflow_resolutions)
         return self
 
 
