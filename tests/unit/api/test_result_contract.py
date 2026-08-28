@@ -584,3 +584,46 @@ def test_lower_bound_slices_cannot_publish_an_exact_delta() -> None:
             right=right,
             deltas=tuple(deltas),
         )
+
+
+def test_available_delta_must_retain_the_paired_value_kind_and_unit() -> None:
+    left = side_result("task-a")
+    right = side_result("task-b")
+    available = MetricSlice(
+        slice_key={},
+        state="AVAILABLE",
+        value=ExactValue(kind="COUNT", value=1, unit="count"),
+        coverage=coverage(),
+    )
+    left_metric = left.metric_results[0].model_copy(update={"slices": (available,)})
+    right_metric = right.metric_results[0].model_copy(update={"slices": (available,)})
+    left = left.model_copy(update={"metric_results": (left_metric, *left.metric_results[1:])})
+    right = right.model_copy(update={"metric_results": (right_metric, *right.metric_results[1:])})
+    deltas = [
+        DeltaEntry(
+            metric_coordinate=CATALOG_COORDINATES[0],
+            slice_key={},
+            state="AVAILABLE",
+            value=ExactValue(kind="DURATION_MS", value=0, unit="ms"),
+            direction="NO_CHANGE",
+        )
+    ]
+    deltas.extend(
+        DeltaEntry(
+            metric_coordinate=coordinate,
+            slice_key={},
+            state="WITHHELD",
+            withholding_reason="MISSING_VALUE",
+        )
+        for coordinate in CATALOG_COORDINATES[1:]
+    )
+
+    with pytest.raises(ValidationError):
+        CompareResponse(
+            api_version=1,
+            mode="COMPARE",
+            status="FULL_COMPARE",
+            left=left,
+            right=right,
+            deltas=tuple(deltas),
+        )
