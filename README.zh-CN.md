@@ -21,10 +21,15 @@ candidate metric pure formula、typed Evidence/Workflow resolver，以及端到�
 SINGLE/FULL_COMPARE/PARTIAL_COMPARE 编排。每个成功 side 都返回恰好 12 项 Metric
 Results 与绑定 resolved read set 的 receipt；单项 coverage 空洞不会使其他结果失败。
 
-当前 public Fact projection 仍不暴露 Usage Event native Span identity，也没有 recorded
-repair-to-Role attribution。对应的 call-/Role-scoped input 因而产生显式 missing coverage；
-绝不按 Delivery identity、timestamp、arrival order 或文本猜关联。2.0 Catalog 仍是 review
-candidate，**正式发布前仍可能发生破坏兼容性的变更。**
+当前 public Fact projection 仍不暴露 Usage Event native Span identity，因此 call-scoped
+Usage input 会产生显式 missing coverage；绝不按 Delivery identity、timestamp、arrival
+order 或文本猜关联。Role-template rework 改为描述性的 Delivery/template exposure：accepted
+Manifest 与 recorded C30 选择精确 template，同 Delivery 的有效 `FINDING_FIX` relationship
+表示发生过 rework；它不把因果归于 template、reviewer 或 writer。
+
+Resolution safety limit 全部可配置。默认每 side 500 个 unique Delivery、每次 traversal 20
+页、每 side 100,000 条 Fact+Trace record、side deadline 120 秒。超过边界会显式令该 side
+失败，绝不静默截断。2.0 Catalog 仍是 review candidate，**正式发布前仍可能发生破坏兼容性的变更。**
 
 ## 开发
 
