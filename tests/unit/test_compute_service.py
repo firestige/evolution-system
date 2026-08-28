@@ -102,6 +102,43 @@ class PopulationStub:
         )
 
 
+class MixedRetentionPopulationStub(PopulationStub):
+    async def resolve(
+        self, selection: EvaluationSelection, *, as_of: datetime
+    ) -> ResolvedSelectionPopulation:
+        resolved = await super().resolve(selection, as_of=as_of)
+        second_membership = TaskMembershipReference(
+            delivery_id="delivery-b",
+            manifest_digest="d" * 64,
+            accepted_digest="e" * 64,
+            profile_version="2.0.0",
+            source_identity="event:membership-b",
+            recorded_at=NOW,
+        )
+        second_workflow = resolved.workflow_resolutions[0].model_copy(
+            update={
+                "manifest_digest": "d" * 64,
+                "manifest_projection_digest": "9" * 64,
+                "accepted_digest": "e" * 64,
+                "source_identity": "event:membership-b",
+            }
+        )
+        return replace(
+            resolved,
+            task_population=(
+                resolved.task_population[0].model_copy(
+                    update={
+                        "memberships": (
+                            *resolved.task_population[0].memberships,
+                            second_membership,
+                        )
+                    }
+                ),
+            ),
+            workflow_resolutions=(*resolved.workflow_resolutions, second_workflow),
+        )
+
+
 def delivery_summary() -> FactReading:
     return FactReading(
         fact_id="fact-summary",
@@ -225,14 +262,90 @@ class PartialTraceObservationStub(ObservationStub):
             fields=(*resolved.trace_nodes[0].fields[:-1], ("gen_ai.usage.input_tokens", 999)),
         )
         return replace(
-            resolved, trace_state="PARTIAL", trace_nodes=(*resolved.trace_nodes, expired)
+            resolved,
+            trace_state="PARTIAL",
+            trace_nodes=(*resolved.trace_nodes, expired),
+            evidence_bindings=tuple(
+                binding.model_copy(
+                    update={"completion_state": "PARTIAL", "error_state": "TRACE_PARTIAL"}
+                )
+                if binding.route == "/v1/evidence/traces"
+                else binding
+                for binding in resolved.evidence_bindings
+            ),
         )
 
 
 class ExpiredTraceObservationStub(ObservationStub):
     async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
         resolved = await super().resolve(delivery_id=delivery_id)
-        return replace(resolved, trace_state="EXPIRED", trace_nodes=())
+        return replace(
+            resolved,
+            trace_state="EXPIRED",
+            trace_nodes=(),
+            evidence_bindings=tuple(
+                binding.model_copy(
+                    update={"completion_state": "EXPIRED", "error_state": "TRACE_EXPIRED"}
+                )
+                if binding.route == "/v1/evidence/traces"
+                else binding
+                for binding in resolved.evidence_bindings
+            ),
+        )
+
+
+class ExpiredFactObservationStub(ObservationStub):
+    async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
+        resolved = await super().resolve(delivery_id=delivery_id)
+        expired = replace(
+            delivery_summary(),
+            fact_id="fact-expired",
+            source_identity="event:expired",
+            accepted_digest="e" * 64,
+            event_name="review.summary",
+            availability="UNAVAILABLE",
+            expiry="EXPIRED",
+            fields=(),
+        )
+        return replace(resolved, facts=(*resolved.facts, expired))
+
+
+class MixedRetentionObservationStub(ObservationStub):
+    async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
+        if delivery_id == "delivery-a":
+            return await super().resolve(delivery_id=delivery_id)
+        resolved = await super().resolve(delivery_id="delivery-a")
+        return replace(
+            resolved,
+            delivery_id="delivery-b",
+            facts=(
+                replace(
+                    delivery_summary(),
+                    fact_id="fact-summary-b",
+                    source_identity="event:summary-b",
+                    accepted_digest="f" * 64,
+                ),
+            ),
+            trace_nodes=(),
+            trace_state="EXPIRED",
+            evidence_bindings=tuple(
+                binding.model_copy(
+                    update={
+                        "canonical_filter": {"delivery_id": "delivery-b"},
+                        "route_snapshot": f"{binding.route_snapshot}-b",
+                        **(
+                            {
+                                "completion_state": "EXPIRED",
+                                "error_state": "TRACE_EXPIRED",
+                            }
+                            if binding.route == "/v1/evidence/traces"
+                            else {}
+                        ),
+                    }
+                )
+                for binding in resolved.evidence_bindings
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -416,7 +529,7 @@ async def test_observation_after_side_cutoff_cannot_change_metric_results() -> N
 
 
 @pytest.mark.asyncio
-async def test_partial_trace_computes_active_records_and_marks_receipt_partial() -> None:
+async def test_retention_partial_trace_excludes_delivery_but_remains_in_receipt() -> None:
     response = await EvolutionComputeService(
         PopulationStub(), PartialTraceObservationStub(), now=lambda: NOW
     ).compute(
@@ -429,12 +542,21 @@ async def test_partial_trace_computes_active_records_and_marks_receipt_partial()
 
     assert isinstance(response, SingleResponse)
     by_id = {item.metric_id: item for item in response.result.metric_results}
-    latency = by_id["operational-latency-ms"].slices[0].value
-    assert latency is not None and latency.value == 2
-    token = by_id["operational-token-usage"].slices[0].value
-    assert token is not None and token.value == 5
-    assert by_id["role-model-task-outcome-rate"].slices[0].value is None
-    assert response.result.receipt.population_state == "PARTIAL"
+    assert by_id["operational-latency-ms"].slices[0].coverage.denominator == 0
+    assert by_id["operational-token-usage"].slices[0].coverage.denominator == 0
+    assert by_id["delivery-terminal-outcome-rate"].slices[0].coverage.denominator == 0
+    assert response.result.receipt.population_state == "EXPIRED"
+    assert response.result.receipt.task_population[0].exclusions == ("EXPIRED_DELIVERY",)
+    trace_binding = next(
+        item
+        for item in response.result.receipt.evidence_bindings
+        if item.route == "/v1/evidence/traces"
+    )
+    assert (trace_binding.completion_state, trace_binding.error_state) == (
+        "PARTIAL",
+        "TRACE_PARTIAL",
+    )
+    assert any(item.identity == "node-expired" for item in response.result.receipt.input_refs)
 
 
 @pytest.mark.asyncio
@@ -455,6 +577,49 @@ async def test_expired_trace_leaves_metric_population_but_remains_in_receipt() -
     assert (
         by_id["operational-latency-ms"].slices[0].withholding_reason == "NO_APPLICABLE_POPULATION"
     )
+    assert response.result.receipt.population_state == "EXPIRED"
+
+
+@pytest.mark.asyncio
+async def test_any_expired_fact_excludes_the_whole_delivery_population() -> None:
+    response = await EvolutionComputeService(
+        PopulationStub(), ExpiredFactObservationStub(), now=lambda: NOW
+    ).compute(
+        SingleRequest(
+            api_version=1,
+            mode="SINGLE",
+            selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+        )
+    )
+
+    assert isinstance(response, SingleResponse)
+    by_id = {item.metric_id: item for item in response.result.metric_results}
+    assert by_id["delivery-terminal-outcome-rate"].slices[0].coverage.denominator == 0
+    assert by_id["task-cohort-comparison-eligibility"].slices[0].coverage.denominator == 0
+    assert response.result.receipt.population_state == "EXPIRED"
+    assert response.result.receipt.task_population[0].exclusions == ("EXPIRED_DELIVERY",)
+    assert any(item.identity == "fact-expired" for item in response.result.receipt.input_refs)
+
+
+@pytest.mark.asyncio
+async def test_expired_delivery_does_not_remove_active_sibling_from_task_population() -> None:
+    response = await EvolutionComputeService(
+        MixedRetentionPopulationStub(), MixedRetentionObservationStub(), now=lambda: NOW
+    ).compute(
+        SingleRequest(
+            api_version=1,
+            mode="SINGLE",
+            selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+        )
+    )
+
+    assert isinstance(response, SingleResponse)
+    by_id = {item.metric_id: item for item in response.result.metric_results}
+    outcome = by_id["delivery-terminal-outcome-rate"].slices[0]
+    assert (outcome.numerator, outcome.denominator, outcome.coverage.raw_ratio) == (1, 1, "1")
+    task = by_id["task-cohort-comparison-eligibility"].slices[0]
+    assert (task.denominator, task.coverage.denominator) == (1, 1)
+    assert response.result.receipt.task_population[0].exclusions == ("EXPIRED_DELIVERY",)
     assert response.result.receipt.population_state == "EXPIRED"
 
 
