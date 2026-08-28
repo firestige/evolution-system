@@ -5,7 +5,9 @@ from pydantic import ValidationError
 
 from wsr_evolution.api.models import (
     CatalogBinding,
+    CompareResponse,
     Coverage,
+    DeltaEntry,
     EvaluationSelection,
     EvidenceBinding,
     ExactValue,
@@ -13,8 +15,12 @@ from wsr_evolution.api.models import (
     MetricResult,
     MetricSlice,
     ResolvedEvaluationContext,
+    SideError,
+    SideResult,
+    SingleResponse,
     TaskPopulationEntry,
 )
+from wsr_evolution.catalog import CATALOG_COORDINATES
 
 
 def coverage(*, numerator: int = 1, denominator: int = 1, raw_ratio: str = "1") -> Coverage:
@@ -198,4 +204,107 @@ def test_metric_slice_truth_and_value_shape_is_closed(
                 "withholding_reason": withholding_reason,
                 "coverage": coverage().model_dump(mode="json"),
             }
+        )
+
+
+def minimal_context(task_id: str) -> ResolvedEvaluationContext:
+    return ResolvedEvaluationContext(
+        context_version=1,
+        selection=EvaluationSelection(selection_version=1, task_ids=(task_id,)),
+        as_of=datetime(2026, 8, 28, 1, 0, tzinfo=UTC),
+        resolved_at=datetime(2026, 8, 28, 1, 1, tzinfo=UTC),
+        task_population=(),
+        catalog=CatalogBinding(
+            catalog_id="agentops.evaluation.metric-catalog",
+            version="1.0.0",
+            semantic_digest="6dbb4375507a3a2eebbe5e86bb6f0a40ebf811790f55ee841b15c6942e1f159d",
+            observation_profile="1.0.0",
+        ),
+        evidence_bindings=(),
+        input_refs=(),
+        population_state="COMPLETE",
+    )
+
+
+def unavailable_result(coordinate: str) -> MetricResult:
+    metric_id, metric_version = coordinate.rsplit("@", 1)
+    return MetricResult(
+        metric_id=metric_id,
+        metric_version=metric_version,
+        slices=(
+            MetricSlice(
+                slice_key={},
+                state="UNAVAILABLE",
+                withholding_reason="MISSING_INPUT",
+                coverage=Coverage(
+                    numerator=0,
+                    denominator=0,
+                    raw_ratio="0",
+                    state="NO_POPULATION",
+                    alert=True,
+                ),
+            ),
+        ),
+    )
+
+
+def side_result(task_id: str) -> SideResult:
+    return SideResult(
+        tag="SIDE_RESULT",
+        receipt=minimal_context(task_id),
+        metric_results=tuple(unavailable_result(item) for item in CATALOG_COORDINATES),
+    )
+
+
+def test_successful_side_requires_exact_fourteen_catalog_coordinates() -> None:
+    response = SingleResponse(api_version=1, mode="SINGLE", result=side_result("task-a"))
+
+    assert len(response.result.metric_results) == 14
+    assert tuple(
+        f"{result.metric_id}@{result.metric_version}" for result in response.result.metric_results
+    ) == CATALOG_COORDINATES
+
+    with pytest.raises(ValidationError):
+        SideResult(
+            tag="SIDE_RESULT",
+            receipt=minimal_context("task-a"),
+            metric_results=tuple(
+                unavailable_result(item) for item in CATALOG_COORDINATES[:-1]
+            ),
+        )
+
+
+def test_partial_compare_retains_successful_side_and_all_unresolved_deltas() -> None:
+    response = CompareResponse(
+        api_version=1,
+        mode="COMPARE",
+        status="PARTIAL_COMPARE",
+        left=side_result("task-a"),
+        right=SideError(
+            tag="SIDE_ERROR",
+            code="EVIDENCE_UNAVAILABLE",
+            retryable=True,
+            detail="Evidence did not answer",
+        ),
+        deltas=tuple(
+            DeltaEntry(metric_coordinate=item, state="SIDE_UNRESOLVED")
+            for item in CATALOG_COORDINATES
+        ),
+    )
+
+    assert response.left.tag == "SIDE_RESULT"
+    assert response.right.tag == "SIDE_ERROR"
+    assert len(response.deltas) == 14
+
+    with pytest.raises(ValidationError):
+        CompareResponse(
+            api_version=1,
+            mode="COMPARE",
+            status="PARTIAL_COMPARE",
+            left=side_result("task-a"),
+            right=response.right,
+            deltas=(
+                DeltaEntry(metric_coordinate=CATALOG_COORDINATES[0], state="AVAILABLE"),
+                *response.deltas[1:],
+            ),
         )
