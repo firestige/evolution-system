@@ -7,7 +7,9 @@ requires-python = ">=3.13,<3.15"
 license = "Apache-2.0"
 authors = [{ name = "firestige" }]
 dependencies = [
+  "fastapi==0.141.1",
   "pydantic==2.13.4",
+  "uvicorn==0.52.4",
 ]
 
 [build-system]
@@ -16,7 +18,9 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+  "httpx==0.28.1",
   "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
 ]
 
 [tool.pytest.ini_options]
