@@ -137,3 +137,30 @@ class RoleTemplateUsageUnit:
     @property
     def compatibility(self) -> tuple[str, str, str, str]:
         return (self.kind, self.unit, self.source, self.source_id)
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalUsageUnit:
+    call_identity: str
+    source_applicable: bool
+    kind: str | None
+    unit: str | None
+    source: str | None
+    source_id: str | None
+    value: int | None
+    provenance_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        coordinates = (self.kind, self.unit, self.source, self.source_id)
+        if self.source_applicable != all(item is not None for item in coordinates):
+            raise ValueError("Usage source applicability and coordinates disagree")
+        if not self.source_applicable and self.value is not None:
+            raise ValueError("not-applicable Usage cannot contain a value")
+
+    @property
+    def compatibility(self) -> tuple[str, str, str, str] | None:
+        if not self.source_applicable:
+            return None
+        assert self.kind is not None and self.unit is not None
+        assert self.source is not None and self.source_id is not None
+        return (self.kind, self.unit, self.source, self.source_id)
