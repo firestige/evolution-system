@@ -176,17 +176,33 @@ class EvolutionComputeService:
                     if input_count > self._limits.max_input_records_per_side:
                         raise ResolutionBoundExceeded("Fact and Trace input record bound exceeded")
 
-        facts_by_delivery = {
+        observed_facts_by_delivery = {
             delivery_id: tuple(fact for fact in observation.facts if fact.recorded_at <= as_of)
             for delivery_id, observation in observations.items()
         }
-        nodes_by_delivery = {
-            delivery_id: (
-                tuple(node for node in observation.trace_nodes if node.recorded_at <= as_of)
-                if observation.trace_state in {"AVAILABLE", "PARTIAL"}
-                else ()
+        observed_nodes_by_delivery = {
+            delivery_id: tuple(
+                node for node in observation.trace_nodes if node.recorded_at <= as_of
             )
             for delivery_id, observation in observations.items()
+        }
+        retention_excluded_delivery_ids = {
+            delivery_id
+            for delivery_id, observation in observations.items()
+            if observation.trace_state in {"PARTIAL", "EXPIRED"}
+            or any(fact.expiry == "EXPIRED" for fact in observed_facts_by_delivery[delivery_id])
+            or any(node.expiry == "EXPIRED" for node in observed_nodes_by_delivery[delivery_id])
+        }
+        active_delivery_ids = selected_delivery_ids - retention_excluded_delivery_ids
+        facts_by_delivery = {
+            delivery_id: facts
+            for delivery_id, facts in observed_facts_by_delivery.items()
+            if delivery_id in active_delivery_ids
+        }
+        nodes_by_delivery = {
+            delivery_id: nodes
+            for delivery_id, nodes in observed_nodes_by_delivery.items()
+            if delivery_id in active_delivery_ids
         }
         try:
             deliveries = tuple(
@@ -211,22 +227,45 @@ class EvolutionComputeService:
         )
 
         tasks = tuple(
-            normalize_task(
-                task.task_id,
-                tuple(item.delivery_id for item in task.memberships),
-                deliveries,
-            )
+            normalize_task(task.task_id, active_memberships, deliveries)
             for task in population.task_population
+            if (
+                active_memberships := tuple(
+                    item.delivery_id
+                    for item in task.memberships
+                    if item.delivery_id in active_delivery_ids
+                )
+            )
+            or not task.memberships
         )
         task_by_id = {task.task_id: task for task in tasks}
         resolved_task_population = tuple(
             entry.model_copy(
                 update={
-                    "terminal_reading": task_by_id[entry.task_id].terminal_outcome,
-                    "exclusions": (
-                        ()
-                        if task_by_id[entry.task_id].classification == "ELIGIBLE"
-                        else (task_by_id[entry.task_id].classification,)
+                    "terminal_reading": (
+                        task_by_id[entry.task_id].terminal_outcome
+                        if entry.task_id in task_by_id
+                        else None
+                    ),
+                    "exclusions": tuple(
+                        sorted(
+                            {
+                                *(
+                                    ()
+                                    if entry.task_id not in task_by_id
+                                    or task_by_id[entry.task_id].classification == "ELIGIBLE"
+                                    else (task_by_id[entry.task_id].classification,)
+                                ),
+                                *(
+                                    ("EXPIRED_DELIVERY",)
+                                    if any(
+                                        membership.delivery_id in retention_excluded_delivery_ids
+                                        for membership in entry.memberships
+                                    )
+                                    else ()
+                                ),
+                            }
+                        )
                     ),
                 }
             )
@@ -239,7 +278,9 @@ class EvolutionComputeService:
         )
         role_template_usage = self._role_template_usage_units(role_template_units, usage)
         delivery_ids = tuple(item.delivery_id for item in deliveries)
-        trace_states = tuple(observation.trace_state for observation in observations.values())
+        trace_states = tuple(observation.trace_state for observation in observations.values()) + (
+            ("EXPIRED",) if retention_excluded_delivery_ids else ()
+        )
         # The current public Fact response does not expose the Usage Event's native
         # Span identity. Call-scoped Usage therefore remains an explicit coverage
         # hole instead of being guessed by Delivery or time.
@@ -274,7 +315,7 @@ class EvolutionComputeService:
                             identity=fact.fact_id,
                             provenance_ref=fact.accepted_digest,
                         )
-                        for facts in facts_by_delivery.values()
+                        for facts in observed_facts_by_delivery.values()
                         for fact in facts
                     ),
                     *(
@@ -283,7 +324,7 @@ class EvolutionComputeService:
                             identity=node.resource_id,
                             provenance_ref=node.source_identity,
                         )
-                        for nodes in nodes_by_delivery.values()
+                        for nodes in observed_nodes_by_delivery.values()
                         for node in nodes
                     ),
                 ),
@@ -319,7 +360,9 @@ class EvolutionComputeService:
     ) -> tuple[RoleModelTaskUnit, ...]:
         result = []
         for entry in population.task_population:
-            task = tasks[entry.task_id]
+            task = tasks.get(entry.task_id)
+            if task is None:
+                continue
             if task.classification != "ELIGIBLE" or task.terminal_outcome is None:
                 continue
             task_calls = tuple(
