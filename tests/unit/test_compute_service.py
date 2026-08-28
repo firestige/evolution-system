@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Literal, cast
@@ -17,12 +18,22 @@ from wsr_evolution.api.models import (
     WorkflowResolutionAttempt,
     WorkflowResolutionEntry,
 )
-from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
+from wsr_evolution.application import (
+    ResolutionBoundExceeded,
+    UpstreamContractMismatch,
+    UpstreamUnavailable,
+)
 from wsr_evolution.catalog import CATALOG_COORDINATES, CATALOG_SEMANTIC_DIGEST
 from wsr_evolution.compute import EvolutionComputeService
-from wsr_evolution.domain.models import ReportedUsageUnit, RoleTemplateTaskUnit
-from wsr_evolution.domain.ports import FactReading, TraceNodeReading
+from wsr_evolution.domain.models import ReportedUsageUnit, RoleTemplateDeliveryUnit
+from wsr_evolution.domain.ports import (
+    FactReading,
+    FactRelationship,
+    FactRelationshipEndpoint,
+    TraceNodeReading,
+)
 from wsr_evolution.resolution.service import (
+    ResolutionLimits,
     ResolvedDeliveryObservation,
     ResolvedSelectionPopulation,
 )
@@ -203,7 +214,19 @@ class FutureFactObservationStub(ObservationStub):
 class PartialTraceObservationStub(ObservationStub):
     async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
         resolved = await super().resolve(delivery_id=delivery_id)
-        return replace(resolved, trace_state="PARTIAL")
+        expired = replace(
+            resolved.trace_nodes[0],
+            resource_id="node-expired",
+            span_id="f" * 16,
+            source_identity=f"span:{'d' * 32}/{'f' * 16}",
+            availability="UNAVAILABLE",
+            expiry="EXPIRED",
+            end_time_unix_nano=100_000_000,
+            fields=(*resolved.trace_nodes[0].fields[:-1], ("gen_ai.usage.input_tokens", 999)),
+        )
+        return replace(
+            resolved, trace_state="PARTIAL", trace_nodes=(*resolved.trace_nodes, expired)
+        )
 
 
 class ExpiredTraceObservationStub(ObservationStub):
@@ -308,6 +331,15 @@ class PartiallyUnavailablePopulation(PopulationStub):
         return await super().resolve(selection, as_of=as_of)
 
 
+class PartiallyBoundedPopulation(PopulationStub):
+    async def resolve(
+        self, selection: EvaluationSelection, *, as_of: datetime
+    ) -> ResolvedSelectionPopulation:
+        if selection.task_ids == ("task-b",):
+            raise ResolutionBoundExceeded("unique Delivery bound exceeded")
+        return await super().resolve(selection, as_of=as_of)
+
+
 @pytest.mark.asyncio
 async def test_partial_compare_preserves_successful_side_and_withholds_all_deltas() -> None:
     response = await EvolutionComputeService(
@@ -327,6 +359,27 @@ async def test_partial_compare_preserves_successful_side_and_withholds_all_delta
     assert isinstance(response.right, SideError)
     assert response.right.retryable is True
     assert all(entry.state == "SIDE_UNRESOLVED" for entry in response.deltas)
+
+
+@pytest.mark.asyncio
+async def test_partial_compare_preserves_successful_side_when_other_side_exceeds_bound() -> None:
+    response = await EvolutionComputeService(
+        PartiallyBoundedPopulation(), ObservationStub(), now=lambda: NOW
+    ).compute(
+        CompareRequest(
+            api_version=1,
+            mode="COMPARE",
+            left=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+            right=EvaluationSelection(selection_version=1, task_ids=("task-b",)),
+        )
+    )
+
+    assert isinstance(response, CompareResponse)
+    assert response.status == "PARTIAL_COMPARE"
+    assert response.left.tag == "SIDE_RESULT"
+    assert isinstance(response.right, SideError)
+    assert response.right.code == "RESOLUTION_BOUND_EXCEEDED"
+    assert response.right.retryable is False
 
 
 @pytest.mark.asyncio
@@ -363,7 +416,7 @@ async def test_observation_after_side_cutoff_cannot_change_metric_results() -> N
 
 
 @pytest.mark.asyncio
-async def test_partial_trace_never_publishes_complete_operational_measurements() -> None:
+async def test_partial_trace_computes_active_records_and_marks_receipt_partial() -> None:
     response = await EvolutionComputeService(
         PopulationStub(), PartialTraceObservationStub(), now=lambda: NOW
     ).compute(
@@ -376,13 +429,16 @@ async def test_partial_trace_never_publishes_complete_operational_measurements()
 
     assert isinstance(response, SingleResponse)
     by_id = {item.metric_id: item for item in response.result.metric_results}
-    assert by_id["operational-latency-ms"].slices[0].value is None
-    assert by_id["operational-token-usage"].slices[0].value is None
+    latency = by_id["operational-latency-ms"].slices[0].value
+    assert latency is not None and latency.value == 2
+    token = by_id["operational-token-usage"].slices[0].value
+    assert token is not None and token.value == 5
     assert by_id["role-model-task-outcome-rate"].slices[0].value is None
+    assert response.result.receipt.population_state == "PARTIAL"
 
 
 @pytest.mark.asyncio
-async def test_expired_trace_remains_distinct_in_metric_and_receipt_truth() -> None:
+async def test_expired_trace_leaves_metric_population_but_remains_in_receipt() -> None:
     response = await EvolutionComputeService(
         PopulationStub(), ExpiredTraceObservationStub(), now=lambda: NOW
     ).compute(
@@ -395,14 +451,16 @@ async def test_expired_trace_remains_distinct_in_metric_and_receipt_truth() -> N
 
     assert isinstance(response, SingleResponse)
     by_id = {item.metric_id: item for item in response.result.metric_results}
-    assert by_id["operational-latency-ms"].slices[0].state == "EXPIRED"
-    assert by_id["operational-latency-ms"].slices[0].withholding_reason == "EXPIRED_INPUT"
+    assert by_id["operational-latency-ms"].slices[0].state == "UNAVAILABLE"
+    assert (
+        by_id["operational-latency-ms"].slices[0].withholding_reason == "NO_APPLICABLE_POPULATION"
+    )
     assert response.result.receipt.population_state == "EXPIRED"
 
 
-def test_role_template_usage_is_bound_by_exact_task_delivery_membership() -> None:
-    task = RoleTemplateTaskUnit(
-        task_id="task-a",
+def test_role_template_usage_is_bound_by_exact_delivery() -> None:
+    delivery = RoleTemplateDeliveryUnit(
+        delivery_id="delivery-a",
         role_id="writer",
         role_prompt_identity="role.writer",
         role_prompt_digest=f"sha256:{'3' * 64}",
@@ -420,28 +478,85 @@ def test_role_template_usage_is_bound_by_exact_task_delivery_membership() -> Non
         provenance_refs=("fact-a",),
     )
 
-    units = EvolutionComputeService._role_template_usage_units(
-        (
-            TaskPopulationEntry(
-                task_id="task-a",
-                memberships=(
-                    TaskMembershipReference(
-                        delivery_id="delivery-a",
-                        manifest_digest="a" * 64,
-                        accepted_digest="b" * 64,
-                        profile_version="2.0.0",
-                        source_identity="event:membership",
-                        recorded_at=NOW,
-                    ),
-                ),
-            ),
-        ),
-        (task,),
-        (usage,),
-    )
+    units = EvolutionComputeService._role_template_usage_units((delivery,), (usage,))
 
     assert len(units) == 1
-    assert units[0].task_id == "task-a"
-    assert units[0].template == task.template
+    assert units[0].delivery_id == "delivery-a"
+    assert units[0].template == delivery.template
     assert units[0].compatibility == usage.compatibility
     assert units[0].value == 25
+
+
+@pytest.mark.asyncio
+async def test_compute_side_enforces_total_fact_and_trace_record_bound() -> None:
+    with pytest.raises(ResolutionBoundExceeded, match="input record"):
+        await EvolutionComputeService(
+            PopulationStub(),
+            ObservationStub(),
+            now=lambda: NOW,
+            limits=ResolutionLimits(max_input_records_per_side=1),
+        ).compute(
+            SingleRequest(
+                api_version=1,
+                mode="SINGLE",
+                selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_compute_side_enforces_configured_deadline() -> None:
+    class SlowPopulation(PopulationStub):
+        async def resolve(
+            self, selection: EvaluationSelection, *, as_of: datetime
+        ) -> ResolvedSelectionPopulation:
+            await asyncio.sleep(0.02)
+            return await super().resolve(selection, as_of=as_of)
+
+    with pytest.raises(ResolutionBoundExceeded, match="deadline"):
+        await EvolutionComputeService(
+            SlowPopulation(),
+            ObservationStub(),
+            now=lambda: NOW,
+            limits=ResolutionLimits(side_deadline_seconds=0.001),
+        ).compute(
+            SingleRequest(
+                api_version=1,
+                mode="SINGLE",
+                selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+            )
+        )
+
+
+def test_repair_reading_uses_recorded_finding_fix_relationship_without_counting_repeats() -> None:
+    relationship = FactRelationship(
+        kind="FINDING_FIX",
+        source=FactRelationshipEndpoint(kind="FIX", key=("fix-a",)),
+        target=FactRelationshipEndpoint(kind="FINDING_TARGET", key=("finding-a",)),
+    )
+    first = replace(
+        delivery_summary(),
+        fact_id="fix-a",
+        kind="FINDING_FIX",
+        relationships=(relationship,),
+    )
+    second = replace(first, fact_id="fix-b")
+    expired = replace(
+        first,
+        fact_id="fix-expired",
+        availability="UNAVAILABLE",
+        expiry="EXPIRED",
+        relationships=(),
+    )
+    unavailable = replace(
+        first,
+        fact_id="fix-unavailable",
+        availability="UNAVAILABLE",
+        relationships=(),
+    )
+
+    assert EvolutionComputeService._repair_observed((first, second)) is True
+    assert EvolutionComputeService._repair_observed((delivery_summary(),)) is False
+    assert EvolutionComputeService._repair_reading((first, expired)) == (True, False)
+    assert EvolutionComputeService._repair_reading((unavailable, expired)) == (None, False)
+    assert EvolutionComputeService._repair_reading((expired,)) == (None, True)

@@ -17,7 +17,11 @@ from wsr_evolution.api.models import (
     TaskPopulationEntry,
 )
 from wsr_evolution.app import create_app
-from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
+from wsr_evolution.application import (
+    ResolutionBoundExceeded,
+    UpstreamContractMismatch,
+    UpstreamUnavailable,
+)
 from wsr_evolution.catalog import (
     CATALOG_COORDINATES,
     CATALOG_SEMANTIC_DIGEST,
@@ -105,6 +109,11 @@ class MismatchService:
         raise UpstreamContractMismatch("Evidence returned an unknown revision")
 
 
+class BoundService:
+    async def compute(self, request: object) -> object:
+        raise ResolutionBoundExceeded("unique Delivery bound exceeded")
+
+
 async def post(service: object, payload: dict[str, object]) -> Response:
     async with AsyncClient(
         transport=ASGITransport(app=create_app(service)),
@@ -157,6 +166,7 @@ async def test_request_validation_is_bounded_400() -> None:
     [
         (UnavailableService(), 503, "UPSTREAM_UNAVAILABLE", True),
         (MismatchService(), 502, "UPSTREAM_INCOMPATIBLE", False),
+        (BoundService(), 413, "RESOLUTION_BOUND_EXCEEDED", False),
     ],
 )
 async def test_upstream_failures_never_become_metric_unavailable(

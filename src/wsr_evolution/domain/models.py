@@ -106,13 +106,14 @@ class ReportedUsageUnit:
 
 
 @dataclass(frozen=True, slots=True)
-class RoleTemplateTaskUnit:
-    task_id: str
+class RoleTemplateDeliveryUnit:
+    delivery_id: str
     role_id: str
     role_prompt_identity: str
     role_prompt_digest: str
     repair_observed: bool | None
     provenance_refs: tuple[str, ...]
+    repair_expired: bool = False
 
     @property
     def template(self) -> tuple[str, str, str]:
@@ -121,7 +122,7 @@ class RoleTemplateTaskUnit:
 
 @dataclass(frozen=True, slots=True)
 class RoleTemplateUsageUnit:
-    task_id: str
+    delivery_id: str
     role_id: str
     role_prompt_identity: str
     role_prompt_digest: str

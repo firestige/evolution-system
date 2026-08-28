@@ -6,6 +6,19 @@ type Scalar = str | int | float | bool | None
 
 
 @dataclass(frozen=True, slots=True)
+class FactRelationshipEndpoint:
+    kind: str
+    key: tuple[Scalar, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FactRelationship:
+    kind: str
+    source: FactRelationshipEndpoint
+    target: FactRelationshipEndpoint
+
+
+@dataclass(frozen=True, slots=True)
 class FactReading:
     fact_id: str
     kind: str
@@ -18,6 +31,7 @@ class FactReading:
     expiry: str
     fields: tuple[tuple[str, Scalar], ...]
     compatibility: tuple[tuple[str, Scalar], ...]
+    relationships: tuple[FactRelationship, ...] = ()
 
     @property
     def field_map(self) -> dict[str, Scalar]:

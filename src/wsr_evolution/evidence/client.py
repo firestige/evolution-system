@@ -22,8 +22,11 @@ from wsr_evolution.domain.ports import (
     DeliveryManifestReading,
     FactPage,
     FactReading,
+    FactRelationship,
+    FactRelationshipEndpoint,
     ManifestRoleBinding,
     ManifestWorkflow,
+    Scalar,
     TaskMembershipPage,
     TaskMembershipSummary,
     TaskPage,
@@ -91,6 +94,34 @@ class _Compatibility(_ClosedModel):
     dimensions: tuple[_Field, ...] = Field(max_length=16)
 
 
+class _RelationshipEndpoint(_ClosedModel):
+    kind: Literal[
+        "FINDING",
+        "FINDING_TARGET",
+        "FIX",
+        "RECHECK",
+        "ROLE",
+        "ROLE_LINEAGE",
+        "SPAN",
+        "DELIVERY",
+        "MODEL_ROLE",
+    ]
+    key: tuple[Scalar, ...] = Field(min_length=1, max_length=16)
+
+
+class _Relationship(_ClosedModel):
+    kind: Literal[
+        "FINDING_TARGET",
+        "FINDING_FIX",
+        "FINDING_RECHECK",
+        "ROLE_LINEAGE",
+        "DELIVERY_ROOT",
+        "MODEL_ATTRIBUTION",
+    ]
+    source: _RelationshipEndpoint = Field(alias="from")
+    target: _RelationshipEndpoint = Field(alias="to")
+
+
 class _Fact(_ClosedModel):
     id: str = Field(min_length=1)
     kind: Literal[
@@ -110,7 +141,7 @@ class _Fact(_ClosedModel):
     compatibility: _Compatibility
     truth: _Truth
     fields: tuple[_Field, ...] = Field(max_length=73)
-    relationships: tuple[dict[str, object], ...] = Field(max_length=16)
+    relationships: tuple[_Relationship, ...] = Field(max_length=16)
 
 
 class _FactsEnvelope(_ClosedModel):
@@ -436,6 +467,20 @@ class EvidenceHttpClient:
                     fields=tuple((field.field, field.value) for field in item.fields),
                     compatibility=tuple(
                         (field.field, field.value) for field in item.compatibility.dimensions
+                    ),
+                    relationships=tuple(
+                        FactRelationship(
+                            kind=relationship.kind,
+                            source=FactRelationshipEndpoint(
+                                kind=relationship.source.kind,
+                                key=relationship.source.key,
+                            ),
+                            target=FactRelationshipEndpoint(
+                                kind=relationship.target.kind,
+                                key=relationship.target.key,
+                            ),
+                        )
+                        for relationship in item.relationships
                     ),
                 )
                 for item in envelope.items

@@ -2,14 +2,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from wsr_evolution.application import UpstreamContractMismatch
+from wsr_evolution.application import ResolutionBoundExceeded, UpstreamContractMismatch
 from wsr_evolution.domain.ports import (
     FactPage,
     FactReading,
     TraceNodeReading,
     TracePage,
 )
-from wsr_evolution.resolution.service import DeliveryObservationResolver
+from wsr_evolution.resolution.service import DeliveryObservationResolver, ResolutionLimits
 
 
 def fact(fact_id: str) -> FactReading:
@@ -101,3 +101,23 @@ async def test_partial_trace_read_set_is_never_claimed_complete() -> None:
     )
     assert trace_binding.completion_state == "PARTIAL"
     assert trace_binding.error_state == "TRACE_PARTIAL"
+
+
+@pytest.mark.asyncio
+async def test_observation_resolver_rejects_repeated_cursor() -> None:
+    class RepeatingReader(ReaderStub):
+        async def resolve_facts(
+            self, *, delivery_id: str, limit: int, cursor: str | None
+        ) -> FactPage:
+            return FactPage((fact("fact-a"),), "same", "facts-a")
+
+    with pytest.raises(ResolutionBoundExceeded, match="cursor"):
+        await DeliveryObservationResolver(RepeatingReader()).resolve(delivery_id="delivery-a")
+
+
+@pytest.mark.asyncio
+async def test_observation_resolver_enforces_configured_page_cap() -> None:
+    with pytest.raises(ResolutionBoundExceeded, match="page"):
+        await DeliveryObservationResolver(
+            ReaderStub(), limits=ResolutionLimits(max_pages_per_traversal=1)
+        ).resolve(delivery_id="delivery-a")

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from wsr_evolution.api.models import ComputeRequest, ComputeResponse
 from wsr_evolution.application import (
     ComputeService,
+    ResolutionBoundExceeded,
     UpstreamContractMismatch,
     UpstreamUnavailable,
 )
@@ -60,6 +61,8 @@ def create_app(service: object) -> FastAPI:
             return await compute_service.compute(request)
         except UpstreamUnavailable as error:
             return _error(503, "UPSTREAM_UNAVAILABLE", True, str(error))
+        except ResolutionBoundExceeded as error:
+            return _error(413, "RESOLUTION_BOUND_EXCEEDED", False, str(error))
         except UpstreamContractMismatch as error:
             return _error(502, "UPSTREAM_INCOMPATIBLE", False, str(error))
 

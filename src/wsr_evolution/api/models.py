@@ -275,7 +275,7 @@ class TaskPopulationEntry(ClosedModel):
 class CatalogBinding(ClosedModel):
     catalog_id: Literal["agentops.evaluation.metric-catalog"]
     version: Literal["2.0.0"]
-    semantic_digest: Literal["f1071c20b38c3b09d1c883e116d64b4d72288d7c00b645165086907ca1d2cb2f"]
+    semantic_digest: Literal["851692f9d4a549d21f3c741470737eabb0d40b5f03cf10ffae76e1892023741e"]
     observation_profile: Literal["1.0.0"]
 
 

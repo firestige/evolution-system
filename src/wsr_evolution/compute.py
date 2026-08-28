@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -12,22 +13,23 @@ from wsr_evolution.api.models import (
     CompareResponse,
     ComputeRequest,
     ComputeResponse,
-    Coverage,
     DeltaEntry,
     EvaluationSelection,
     EvidenceBinding,
     ExactValue,
     InputReference,
-    MetricResult,
     MetricSlice,
     ResolvedEvaluationContext,
     SideError,
     SideResult,
     SingleRequest,
     SingleResponse,
-    TaskPopulationEntry,
 )
-from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
+from wsr_evolution.application import (
+    ResolutionBoundExceeded,
+    UpstreamContractMismatch,
+    UpstreamUnavailable,
+)
 from wsr_evolution.calculators import (
     delivery_cycle_time_ms,
     delivery_stage_reach,
@@ -44,18 +46,21 @@ from wsr_evolution.calculators import (
 )
 from wsr_evolution.catalog import CATALOG_SEMANTIC_DIGEST
 from wsr_evolution.domain.models import (
+    DeliveryMetricUnit,
     OperationalCallUnit,
     ReportedUsageUnit,
     RoleModelTaskUnit,
-    RoleTemplateTaskUnit,
+    RoleTemplateDeliveryUnit,
     RoleTemplateUsageUnit,
     TaskMetricUnit,
 )
+from wsr_evolution.domain.ports import FactReading
 from wsr_evolution.normalization.delivery import normalize_delivery
 from wsr_evolution.normalization.operational import normalize_model_calls
 from wsr_evolution.normalization.task import normalize_task
 from wsr_evolution.normalization.usage import normalize_reported_usage
 from wsr_evolution.resolution.service import (
+    ResolutionLimits,
     ResolvedDeliveryObservation,
     ResolvedSelectionPopulation,
 )
@@ -69,6 +74,9 @@ class PopulationResolver(Protocol):
 
 class ObservationResolver(Protocol):
     async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation: ...
+
+
+type SideFailure = UpstreamUnavailable | UpstreamContractMismatch | ResolutionBoundExceeded
 
 
 def _unique_bindings(items: tuple[EvidenceBinding, ...]) -> tuple[EvidenceBinding, ...]:
@@ -111,28 +119,6 @@ def _population_state(
     return "COMPLETE"
 
 
-def _trace_withheld(metric_id: str, *, trace_state: str, denominator: int) -> MetricResult:
-    metric_coverage = Coverage(
-        numerator=0,
-        denominator=denominator,
-        raw_ratio=None if denominator == 0 else "0",
-        state="NO_POPULATION" if denominator == 0 else "NO_COVERAGE",
-        alert=None if denominator == 0 else "LOW_COVERAGE",
-    )
-    return MetricResult(
-        metric_id=metric_id,
-        metric_version="2.0.0",
-        slices=(
-            MetricSlice(
-                slice_key={},
-                state="EXPIRED" if trace_state == "EXPIRED" else "UNAVAILABLE",
-                withholding_reason="EXPIRED_INPUT",
-                coverage=metric_coverage,
-            ),
-        ),
-    )
-
-
 class EvolutionComputeService:
     def __init__(
         self,
@@ -140,25 +126,42 @@ class EvolutionComputeService:
         observations: ObservationResolver,
         *,
         now: Callable[[], datetime] | None = None,
+        limits: ResolutionLimits | None = None,
     ) -> None:
         self._population = population
         self._observations = observations
         self._now = now or (lambda: datetime.now(UTC))
+        self._limits = limits or ResolutionLimits()
 
     async def compute(self, request: ComputeRequest) -> ComputeResponse:
         if isinstance(request, SingleRequest):
             return SingleResponse(
                 api_version=1,
                 mode="SINGLE",
-                result=await self._compute_side(request.selection),
+                result=await self._compute_side_bounded(request.selection),
             )
         if isinstance(request, CompareRequest):
             return await self._compute_compare(request)
         raise TypeError("unsupported Evolution compute request")
 
+    async def _compute_side_bounded(self, selection: EvaluationSelection) -> SideResult:
+        try:
+            async with asyncio.timeout(self._limits.side_deadline_seconds):
+                return await self._compute_side(selection)
+        except TimeoutError as error:
+            raise ResolutionBoundExceeded("side resolution deadline exceeded") from error
+
     async def _compute_side(self, selection: EvaluationSelection) -> SideResult:
         as_of = self._now()
         population = await self._population.resolve(selection, as_of=as_of)
+
+        selected_delivery_ids = {
+            membership.delivery_id
+            for task in population.task_population
+            for membership in task.memberships
+        }
+        if len(selected_delivery_ids) > self._limits.max_deliveries_per_side:
+            raise ResolutionBoundExceeded("unique Delivery bound exceeded")
 
         observations: dict[str, ResolvedDeliveryObservation] = {}
         for task in population.task_population:
@@ -167,6 +170,11 @@ class EvolutionComputeService:
                     observations[membership.delivery_id] = await self._observations.resolve(
                         delivery_id=membership.delivery_id
                     )
+                    input_count = sum(
+                        len(item.facts) + len(item.trace_nodes) for item in observations.values()
+                    )
+                    if input_count > self._limits.max_input_records_per_side:
+                        raise ResolutionBoundExceeded("Fact and Trace input record bound exceeded")
 
         facts_by_delivery = {
             delivery_id: tuple(fact for fact in observation.facts if fact.recorded_at <= as_of)
@@ -175,7 +183,7 @@ class EvolutionComputeService:
         nodes_by_delivery = {
             delivery_id: (
                 tuple(node for node in observation.trace_nodes if node.recorded_at <= as_of)
-                if observation.trace_state == "AVAILABLE"
+                if observation.trace_state in {"AVAILABLE", "PARTIAL"}
                 else ()
             )
             for delivery_id, observation in observations.items()
@@ -225,95 +233,31 @@ class EvolutionComputeService:
             for entry in population.task_population
         )
         role_model_units = self._role_model_units(population, task_by_id, calls_by_delivery)
-        role_template_units = self._role_template_units(population, task_by_id, calls_by_delivery)
-        role_template_usage = self._role_template_usage_units(
-            population.task_population, role_template_units, usage
+        delivery_by_id = {delivery.delivery_id: delivery for delivery in deliveries}
+        role_template_units = self._role_template_units(
+            population, delivery_by_id, calls_by_delivery, facts_by_delivery
         )
+        role_template_usage = self._role_template_usage_units(role_template_units, usage)
         delivery_ids = tuple(item.delivery_id for item in deliveries)
         trace_states = tuple(observation.trace_state for observation in observations.values())
-        degraded_trace_state = (
-            "EXPIRED"
-            if "EXPIRED" in trace_states
-            else "PARTIAL"
-            if "PARTIAL" in trace_states
-            else None
-        )
-        eligible_tasks = sum(task.classification == "ELIGIBLE" for task in tasks)
-
         # The current public Fact response does not expose the Usage Event's native
-        # Span identity. Call-scoped Usage and repair attribution therefore remain
-        # explicit coverage holes instead of being guessed by Delivery or time.
+        # Span identity. Call-scoped Usage therefore remains an explicit coverage
+        # hole instead of being guessed by Delivery or time.
         results = (
-            (
-                _trace_withheld(
-                    "role-template-rework-rate",
-                    trace_state=degraded_trace_state,
-                    denominator=eligible_tasks,
-                )
-                if degraded_trace_state is not None
-                else role_template_rework_rate.calculate(role_template_units)
+            role_template_rework_rate.calculate(role_template_units),
+            role_template_trajectory_partial_cost.calculate(
+                role_template_units, role_template_usage
             ),
-            (
-                _trace_withheld(
-                    "role-template-trajectory-partial-cost",
-                    trace_state=degraded_trace_state,
-                    denominator=eligible_tasks,
-                )
-                if degraded_trace_state is not None
-                else role_template_trajectory_partial_cost.calculate(
-                    role_template_units, role_template_usage
-                )
-            ),
-            (
-                _trace_withheld(
-                    "role-model-task-outcome-rate",
-                    trace_state=degraded_trace_state,
-                    denominator=eligible_tasks,
-                )
-                if degraded_trace_state is not None
-                else role_model_task_outcome_rate.calculate(role_model_units)
-            ),
-            (
-                _trace_withheld(
-                    "operational-latency-ms",
-                    trace_state=degraded_trace_state,
-                    denominator=0,
-                )
-                if degraded_trace_state is not None
-                else operational_latency_ms.calculate(calls)
-            ),
+            role_model_task_outcome_rate.calculate(role_model_units),
+            operational_latency_ms.calculate(calls),
             trajectory_partial_cost.calculate(delivery_ids, usage),
             task_cohort_comparison_eligibility.calculate(tasks),
             delivery_stage_reach.calculate(deliveries),
             delivery_terminal_outcome_rate.calculate(deliveries),
             delivery_cycle_time_ms.calculate(deliveries),
-            (
-                _trace_withheld(
-                    "operational-token-usage",
-                    trace_state=degraded_trace_state,
-                    denominator=0,
-                )
-                if degraded_trace_state is not None
-                else operational_token_usage.calculate(calls)
-            ),
-            (
-                _trace_withheld(
-                    "operational-attributable-cost",
-                    trace_state=degraded_trace_state,
-                    denominator=0,
-                )
-                if degraded_trace_state is not None
-                else operational_attributable_cost.calculate(calls, ())
-            ),
-            (
-                _trace_withheld(
-                    "operational-usage-availability",
-                    trace_state=degraded_trace_state,
-                    denominator=0,
-                )
-                if degraded_trace_state is not None
-                else operational_usage_availability.calculate(calls, ())
-            ),
+            operational_token_usage.calculate(calls),
+            operational_attributable_cost.calculate(calls, ()),
+            operational_usage_availability.calculate(calls, ()),
         )
 
         observation_bindings = tuple(
@@ -410,18 +354,19 @@ class EvolutionComputeService:
     @staticmethod
     def _role_template_units(
         population: ResolvedSelectionPopulation,
-        tasks: dict[str, TaskMetricUnit],
+        deliveries: dict[str, DeliveryMetricUnit],
         calls_by_delivery: dict[str, tuple[OperationalCallUnit, ...]],
-    ) -> tuple[RoleTemplateTaskUnit, ...]:
+        facts_by_delivery: dict[str, tuple[FactReading, ...]],
+    ) -> tuple[RoleTemplateDeliveryUnit, ...]:
         manifest_by_delivery = {
             reading.delivery_id: reading for reading in population.manifest_readings
         }
-        result: dict[tuple[str, tuple[str, str, str]], RoleTemplateTaskUnit] = {}
+        result: dict[tuple[str, tuple[str, str, str]], RoleTemplateDeliveryUnit] = {}
         for entry in population.task_population:
-            task = tasks[entry.task_id]
-            if task.classification != "ELIGIBLE":
-                continue
             for membership in entry.memberships:
+                delivery = deliveries.get(membership.delivery_id)
+                if delivery is None or delivery.terminal_outcome is None:
+                    continue
                 manifest = manifest_by_delivery.get(membership.delivery_id)
                 if manifest is None:
                     continue
@@ -438,67 +383,100 @@ class EvolutionComputeService:
                         binding.role_prompt_identity,
                         binding.role_prompt_digest,
                     )
-                    key = (task.task_id, template)
-                    result[key] = RoleTemplateTaskUnit(
-                        task_id=task.task_id,
+                    key = (membership.delivery_id, template)
+                    delivery_facts = facts_by_delivery.get(membership.delivery_id, ())
+                    repair_observed, repair_expired = EvolutionComputeService._repair_reading(
+                        delivery_facts
+                    )
+                    result[key] = RoleTemplateDeliveryUnit(
+                        delivery_id=membership.delivery_id,
                         role_id=template[0],
                         role_prompt_identity=template[1],
                         role_prompt_digest=template[2],
-                        repair_observed=None,
+                        repair_observed=repair_observed,
+                        repair_expired=repair_expired,
                         provenance_refs=tuple(
-                            sorted({*task.provenance_refs, manifest.accepted_digest})
+                            sorted(
+                                {
+                                    *delivery.provenance_refs,
+                                    manifest.accepted_digest,
+                                    *(
+                                        fact.accepted_digest
+                                        for fact in delivery_facts
+                                        if fact.kind == "FINDING_FIX"
+                                    ),
+                                }
+                            )
                         ),
                     )
         return tuple(result[key] for key in sorted(result))
 
     @staticmethod
     def _role_template_usage_units(
-        population: tuple[TaskPopulationEntry, ...],
-        tasks: tuple[RoleTemplateTaskUnit, ...],
+        deliveries: tuple[RoleTemplateDeliveryUnit, ...],
         usage: tuple[ReportedUsageUnit, ...],
     ) -> tuple[RoleTemplateUsageUnit, ...]:
-        deliveries_by_task = {
-            entry.task_id: {membership.delivery_id for membership in entry.memberships}
-            for entry in population
-        }
         result = []
-        for task in tasks:
-            delivery_ids = deliveries_by_task.get(task.task_id, set())
+        for delivery in deliveries:
             for item in usage:
-                if item.delivery_id not in delivery_ids:
+                if item.delivery_id != delivery.delivery_id:
                     continue
                 result.append(
                     RoleTemplateUsageUnit(
-                        task_id=task.task_id,
-                        role_id=task.role_id,
-                        role_prompt_identity=task.role_prompt_identity,
-                        role_prompt_digest=task.role_prompt_digest,
+                        delivery_id=delivery.delivery_id,
+                        role_id=delivery.role_id,
+                        role_prompt_identity=delivery.role_prompt_identity,
+                        role_prompt_digest=delivery.role_prompt_digest,
                         kind=item.kind,
                         unit=item.unit,
                         source=item.source,
                         source_id=item.source_id,
                         value=item.value,
                         provenance_refs=tuple(
-                            sorted({*task.provenance_refs, *item.provenance_refs})
+                            sorted({*delivery.provenance_refs, *item.provenance_refs})
                         ),
                         lower_bound=item.lower_bound,
                     )
                 )
         return tuple(result)
 
+    @staticmethod
+    def _repair_observed(facts: tuple[FactReading, ...]) -> bool | None:
+        return EvolutionComputeService._repair_reading(facts)[0]
+
+    @staticmethod
+    def _repair_reading(facts: tuple[FactReading, ...]) -> tuple[bool | None, bool]:
+        repairs = tuple(fact for fact in facts if fact.kind == "FINDING_FIX")
+        if not repairs:
+            return False, False
+        active = tuple(fact for fact in repairs if fact.expiry == "ACTIVE")
+        for fact in active:
+            if fact.availability != "AVAILABLE":
+                continue
+            for relationship in fact.relationships:
+                if (
+                    relationship.kind == "FINDING_FIX"
+                    and relationship.source.kind == "FIX"
+                    and relationship.target.kind == "FINDING_TARGET"
+                ):
+                    return True, False
+        if active:
+            return None, False
+        return None, True
+
     async def _compute_compare(self, request: CompareRequest) -> CompareResponse:
         left: SideResult | SideError
         right: SideResult | SideError
-        left_failure: UpstreamUnavailable | UpstreamContractMismatch | None = None
-        right_failure: UpstreamUnavailable | UpstreamContractMismatch | None = None
+        left_failure: SideFailure | None = None
+        right_failure: SideFailure | None = None
         try:
-            left = await self._compute_side(request.left)
-        except (UpstreamUnavailable, UpstreamContractMismatch) as error:
+            left = await self._compute_side_bounded(request.left)
+        except (UpstreamUnavailable, UpstreamContractMismatch, ResolutionBoundExceeded) as error:
             left_failure = error
             left = self._side_error(error)
         try:
-            right = await self._compute_side(request.right)
-        except (UpstreamUnavailable, UpstreamContractMismatch) as error:
+            right = await self._compute_side_bounded(request.right)
+        except (UpstreamUnavailable, UpstreamContractMismatch, ResolutionBoundExceeded) as error:
             right_failure = error
             right = self._side_error(error)
 
@@ -535,11 +513,19 @@ class EvolutionComputeService:
         )
 
     @staticmethod
-    def _side_error(error: UpstreamUnavailable | UpstreamContractMismatch) -> SideError:
+    def _side_error(
+        error: UpstreamUnavailable | UpstreamContractMismatch | ResolutionBoundExceeded,
+    ) -> SideError:
         retryable = isinstance(error, UpstreamUnavailable)
         return SideError(
             tag="SIDE_ERROR",
-            code="UPSTREAM_UNAVAILABLE" if retryable else "UPSTREAM_INCOMPATIBLE",
+            code=(
+                "UPSTREAM_UNAVAILABLE"
+                if retryable
+                else "RESOLUTION_BOUND_EXCEEDED"
+                if isinstance(error, ResolutionBoundExceeded)
+                else "UPSTREAM_INCOMPATIBLE"
+            ),
             retryable=retryable,
             detail=str(error),
         )
