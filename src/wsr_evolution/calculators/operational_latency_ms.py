@@ -1,3 +1,3 @@
 from .protocol import CalculatorSlot
 
-SLOT = CalculatorSlot("operational-latency-ms@1.0.0", __name__)
+SLOT = CalculatorSlot("operational-latency-ms@2.0.0", __name__)

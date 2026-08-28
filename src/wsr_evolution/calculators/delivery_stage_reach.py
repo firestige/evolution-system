@@ -1,3 +1,3 @@
 from .protocol import CalculatorSlot
 
-SLOT = CalculatorSlot("delivery-stage-reach@1.0.0", __name__)
+SLOT = CalculatorSlot("delivery-stage-reach@2.0.0", __name__)

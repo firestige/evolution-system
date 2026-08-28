@@ -18,7 +18,11 @@ from wsr_evolution.api.models import (
 )
 from wsr_evolution.app import create_app
 from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
-from wsr_evolution.catalog import CATALOG_COORDINATES
+from wsr_evolution.catalog import (
+    CATALOG_COORDINATES,
+    CATALOG_SEMANTIC_DIGEST,
+    CATALOG_VERSION,
+)
 
 
 def fixed_response() -> SingleResponse:
@@ -36,8 +40,8 @@ def fixed_response() -> SingleResponse:
         ),
         catalog=CatalogBinding(
             catalog_id="agentops.evaluation.metric-catalog",
-            version="1.0.0",
-            semantic_digest="6dbb4375507a3a2eebbe5e86bb6f0a40ebf811790f55ee841b15c6942e1f159d",
+            version=CATALOG_VERSION,
+            semantic_digest=CATALOG_SEMANTIC_DIGEST,
             observation_profile="1.0.0",
         ),
         evidence_bindings=(
@@ -60,7 +64,7 @@ def fixed_response() -> SingleResponse:
     results = tuple(
         MetricResult(
             metric_id=coordinate.rsplit("@", 1)[0],
-            metric_version="1.0.0",
+            metric_version=CATALOG_VERSION,
             slices=(
                 MetricSlice(
                     slice_key={},
@@ -122,7 +126,7 @@ async def test_compute_returns_exact_response_without_creating_resource() -> Non
 
     assert first.status_code == 200
     assert first.json() == second.json()
-    assert len(first.json()["result"]["metric_results"]) == 14
+    assert len(first.json()["result"]["metric_results"]) == 12
     assert "location" not in first.headers
 
 
