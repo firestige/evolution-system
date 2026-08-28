@@ -31,6 +31,7 @@ def calculate(
     slices = []
     for (template, usage_coordinate), values in sorted(groups.items()):
         candidates = tuple(item for item in tasks if item.template == template)
+        lower_bound = any(item.lower_bound for item in values)
         covered_ids = {item.task_id for item in values}
         role_id, identity, digest = template
         kind, unit_name, source, source_id = usage_coordinate
@@ -46,7 +47,13 @@ def calculate(
                     "source": source,
                     "source_id": source_id,
                 },
-                state="AVAILABLE" if sufficient else "UNAVAILABLE",
+                state=(
+                    "LOWER_BOUND"
+                    if sufficient and lower_bound
+                    else "AVAILABLE"
+                    if sufficient
+                    else "UNAVAILABLE"
+                ),
                 value=(
                     ExactValue(
                         kind="MONEY",

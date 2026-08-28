@@ -13,10 +13,8 @@ def calculate(units: tuple[TaskMetricUnit, ...]) -> MetricResult:
     covered = tuple(unit for unit in units if unit.covered)
     eligible = tuple(unit for unit in covered if unit.classification == "ELIGIBLE")
     metric_coverage = coverage(len(covered), len(units))
-    exclusions = Counter(
-        unit.classification for unit in covered if unit.classification != "ELIGIBLE"
-    )
-    available = len(covered) >= 20
+    exclusions = Counter(unit.classification for unit in units if unit.classification != "ELIGIBLE")
+    available = len(units) >= 20
     return MetricResult(
         metric_id="task-cohort-comparison-eligibility",
         metric_version="2.0.0",
@@ -24,10 +22,10 @@ def calculate(units: tuple[TaskMetricUnit, ...]) -> MetricResult:
             MetricSlice(
                 slice_key={},
                 state="AVAILABLE" if available else "UNAVAILABLE",
-                value=(ratio_value(len(eligible), len(covered)) if available else None),
+                value=(ratio_value(len(eligible), len(units)) if available else None),
                 withholding_reason=None if available else "SAMPLE_INSUFFICIENT",
                 numerator=len(eligible),
-                denominator=len(covered),
+                denominator=len(units),
                 measures={f"excluded_{key}": value for key, value in sorted(exclusions.items())},
                 coverage=metric_coverage,
                 missing_inputs=tuple(

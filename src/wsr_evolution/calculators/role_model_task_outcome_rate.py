@@ -15,8 +15,7 @@ def calculate(units: tuple[RoleModelTaskUnit, ...]) -> MetricResult:
     slices = []
     for cohort in cohorts:
         group = tuple(unit for unit in units if unit.cohort == cohort)
-        if len(group) < 20:
-            continue
+        sufficient = len(group) >= 20
         provider, model, role, runtime = cohort
         for outcome in sorted({unit.terminal_outcome for unit in group}):
             numerator = sum(unit.terminal_outcome == outcome for unit in group)
@@ -29,8 +28,9 @@ def calculate(units: tuple[RoleModelTaskUnit, ...]) -> MetricResult:
                         "runtime": runtime,
                         "outcome": outcome,
                     },
-                    state="AVAILABLE",
-                    value=ratio_value(numerator, len(group)),
+                    state="AVAILABLE" if sufficient else "UNAVAILABLE",
+                    value=ratio_value(numerator, len(group)) if sufficient else None,
+                    withholding_reason=None if sufficient else "SAMPLE_INSUFFICIENT",
                     numerator=numerator,
                     denominator=len(group),
                     coverage=coverage(len(group), len(group)),

@@ -15,8 +15,7 @@ def calculate(units: tuple[RoleTemplateTaskUnit, ...]) -> MetricResult:
     for template in sorted({unit.template for unit in units}):
         candidates = tuple(unit for unit in units if unit.template == template)
         covered = tuple(unit for unit in candidates if unit.repair_observed is not None)
-        if len(covered) < 20:
-            continue
+        sufficient = len(covered) >= 20
         repaired = sum(unit.repair_observed is True for unit in covered)
         role_id, identity, digest = template
         slices.append(
@@ -26,8 +25,9 @@ def calculate(units: tuple[RoleTemplateTaskUnit, ...]) -> MetricResult:
                     "role_prompt_identity": identity,
                     "role_prompt_digest": digest,
                 },
-                state="AVAILABLE",
-                value=ratio_value(repaired, len(covered)),
+                state="AVAILABLE" if sufficient else "UNAVAILABLE",
+                value=ratio_value(repaired, len(covered)) if sufficient else None,
+                withholding_reason=None if sufficient else "SAMPLE_INSUFFICIENT",
                 numerator=repaired,
                 denominator=len(covered),
                 coverage=coverage(len(covered), len(candidates)),

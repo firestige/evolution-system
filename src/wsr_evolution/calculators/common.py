@@ -43,7 +43,11 @@ def unavailable(metric_id: str, *, metric_coverage: Coverage) -> MetricResult:
             MetricSlice(
                 slice_key={},
                 state="UNAVAILABLE",
-                withholding_reason="NO_APPLICABLE_POPULATION",
+                withholding_reason=(
+                    "NO_APPLICABLE_POPULATION"
+                    if metric_coverage.denominator == 0
+                    else "MISSING_INPUT"
+                ),
                 coverage=metric_coverage,
             ),
         ),
