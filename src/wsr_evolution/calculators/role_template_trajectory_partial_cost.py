@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from wsr_evolution.api.models import ExactValue, MetricResult, MetricSlice
-from wsr_evolution.domain.models import RoleTemplateTaskUnit, RoleTemplateUsageUnit
+from wsr_evolution.domain.models import RoleTemplateDeliveryUnit, RoleTemplateUsageUnit
 
 from .common import coverage, unavailable
 from .protocol import CalculatorSlot
@@ -10,29 +10,30 @@ SLOT = CalculatorSlot("role-template-trajectory-partial-cost@2.0.0", __name__)
 
 
 def calculate(
-    tasks: tuple[RoleTemplateTaskUnit, ...], usage: tuple[RoleTemplateUsageUnit, ...]
+    deliveries: tuple[RoleTemplateDeliveryUnit, ...], usage: tuple[RoleTemplateUsageUnit, ...]
 ) -> MetricResult:
-    task_index = {(item.task_id, item.template): item for item in tasks}
-    if len(task_index) != len(tasks):
-        raise ValueError("duplicate Task/template input")
+    delivery_index = {(item.delivery_id, item.template): item for item in deliveries}
+    if len(delivery_index) != len(deliveries):
+        raise ValueError("duplicate Delivery/template input")
     groups: dict[
         tuple[tuple[str, str, str], tuple[str, str, str, str]],
         list[RoleTemplateUsageUnit],
     ] = defaultdict(list)
     for item in usage:
-        if (item.task_id, item.template) not in task_index:
-            raise ValueError("Usage has no exact Task/template candidate")
+        if (item.delivery_id, item.template) not in delivery_index:
+            raise ValueError("Usage has no exact Delivery/template candidate")
         if item.kind == "money":
             groups[(item.template, item.compatibility)].append(item)
     if not groups:
         return unavailable(
-            "role-template-trajectory-partial-cost", metric_coverage=coverage(0, len(tasks))
+            "role-template-trajectory-partial-cost",
+            metric_coverage=coverage(0, len(deliveries)),
         )
     slices = []
     for (template, usage_coordinate), values in sorted(groups.items()):
-        candidates = tuple(item for item in tasks if item.template == template)
+        candidates = tuple(item for item in deliveries if item.template == template)
         lower_bound = any(item.lower_bound for item in values)
-        covered_ids = {item.task_id for item in values}
+        covered_ids = {item.delivery_id for item in values}
         role_id, identity, digest = template
         kind, unit_name, source, source_id = usage_coordinate
         sufficient = len(covered_ids) >= 20
@@ -77,9 +78,9 @@ def calculate(
                 },
                 missing_inputs=tuple(
                     sorted(
-                        f"reported_usage:{item.task_id}"
+                        f"reported_usage:{item.delivery_id}"
                         for item in candidates
-                        if item.task_id not in covered_ids
+                        if item.delivery_id not in covered_ids
                     )
                 ),
                 provenance_refs=tuple(
