@@ -1,5 +1,5 @@
 from wsr_evolution.api.models import MetricResult, MetricSlice
-from wsr_evolution.domain.models import RoleTemplateTaskUnit
+from wsr_evolution.domain.models import RoleTemplateDeliveryUnit
 
 from .common import coverage, ratio_value, unavailable
 from .protocol import CalculatorSlot
@@ -7,13 +7,15 @@ from .protocol import CalculatorSlot
 SLOT = CalculatorSlot("role-template-rework-rate@2.0.0", __name__)
 
 
-def calculate(units: tuple[RoleTemplateTaskUnit, ...]) -> MetricResult:
-    identities = {(unit.task_id, unit.template) for unit in units}
+def calculate(units: tuple[RoleTemplateDeliveryUnit, ...]) -> MetricResult:
+    identities = {(unit.delivery_id, unit.template) for unit in units}
     if len(identities) != len(units):
-        raise ValueError("duplicate Task/template input")
+        raise ValueError("duplicate Delivery/template input")
     slices = []
     for template in sorted({unit.template for unit in units}):
-        candidates = tuple(unit for unit in units if unit.template == template)
+        candidates = tuple(
+            unit for unit in units if unit.template == template and not unit.repair_expired
+        )
         covered = tuple(unit for unit in candidates if unit.repair_observed is not None)
         sufficient = len(covered) >= 20
         repaired = sum(unit.repair_observed is True for unit in covered)
@@ -38,7 +40,7 @@ def calculate(units: tuple[RoleTemplateTaskUnit, ...]) -> MetricResult:
                 },
                 missing_inputs=tuple(
                     sorted(
-                        f"repair_attribution:{unit.task_id}"
+                        f"repair_relationship:{unit.delivery_id}"
                         for unit in candidates
                         if unit.repair_observed is None
                     )
