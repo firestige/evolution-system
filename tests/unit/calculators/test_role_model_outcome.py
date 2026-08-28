@@ -25,7 +25,9 @@ def test_role_model_outcome_is_task_rate_per_exact_cohort() -> None:
     assert succeeded.slice_key["outcome"] == "SUCCEEDED"
     assert succeeded.value is not None and succeeded.value.value == "3/4"
     assert all(item.denominator == 20 for item in result.slices)
-    assert all(item.coverage.raw_ratio == "1" for item in result.slices)
+    assert all(
+        item.coverage is not None and item.coverage.raw_ratio == "1" for item in result.slices
+    )
 
 
 def test_duplicate_task_in_same_cohort_fails_closed() -> None:
@@ -49,4 +51,5 @@ def test_role_model_outcome_keeps_exact_slices_below_minimum_sample() -> None:
     assert metric_slice.value is None
     assert metric_slice.numerator == 19
     assert metric_slice.denominator == 19
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "1"

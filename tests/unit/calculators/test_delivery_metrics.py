@@ -41,7 +41,9 @@ def test_terminal_outcome_publishes_one_exact_rate_per_recorded_category() -> No
     ]
     assert [item.value.value for item in result.slices if item.value] == ["1/3", "2/3"]
     assert all(item.denominator == 3 for item in result.slices)
-    assert all(item.coverage.raw_ratio == "3/4" for item in result.slices)
+    assert all(
+        item.coverage is not None and item.coverage.raw_ratio == "3/4" for item in result.slices
+    )
     assert all(
         item.missing_inputs == ("delivery.terminal_outcome:d-open",) for item in result.slices
     )
@@ -61,6 +63,7 @@ def test_cycle_time_uses_only_covered_terminal_deliveries_without_zero_fill() ->
     assert metric_slice.value is not None
     assert metric_slice.value.value == "31/2"
     assert metric_slice.contributing_count == 2
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "2/3"
     assert metric_slice.coverage.state == "PARTIAL"
     assert metric_slice.missing_inputs == ("delivery.elapsed_time_ms:d-3",)
@@ -81,7 +84,9 @@ def test_stage_reach_tolerates_per_delivery_holes_and_keeps_exact_stage_identity
     ]
     assert [item.value.value for item in result.slices if item.value] == ["1/2", "1"]
     assert all(item.denominator == 2 for item in result.slices)
-    assert all(item.coverage.raw_ratio == "2/3" for item in result.slices)
+    assert all(
+        item.coverage is not None and item.coverage.raw_ratio == "2/3" for item in result.slices
+    )
     assert all(item.missing_inputs == ("delivery.stage.reached:d-3",) for item in result.slices)
 
 

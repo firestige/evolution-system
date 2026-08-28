@@ -37,6 +37,7 @@ def test_usage_availability_separates_explicit_false_from_missing_classification
     metric_slice = availability(calls, (classified(1, True, 25), classified(2, False))).slices[0]
 
     assert metric_slice.value is not None and metric_slice.value.value == "1/2"
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "2/3"
     assert metric_slice.missing_inputs == ("usage_source_classification:trace/3",)
 
@@ -46,6 +47,7 @@ def test_operational_cost_requires_exact_call_binding_and_usage_coordinate() -> 
     metric_slice = cost(calls, (classified(1, True, 25),)).slices[0]
 
     assert metric_slice.value is not None and metric_slice.value.value == 25
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "1/2"
     assert metric_slice.compatibility["source_id"] == "invoice"
     assert metric_slice.missing_inputs == ("call_reported_usage:trace/2",)
@@ -66,6 +68,7 @@ def test_missing_usage_classification_keeps_known_cohort_and_denominator() -> No
     assert metric_slice.slice_key["model"] == "gpt-5"
     assert metric_slice.value is None
     assert metric_slice.withholding_reason == "MISSING_INPUT"
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "0"
     assert metric_slice.missing_inputs == (
         "usage_source_classification:trace/1",

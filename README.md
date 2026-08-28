@@ -25,8 +25,10 @@ Evidence/Workflow resolvers, and end-to-end SINGLE/FULL_COMPARE/PARTIAL_COMPARE
 orchestration. Every successful side returns the exact 12 Metric Results and a
 receipt-bound resolved read set; metric-level holes do not fail the other results.
 Authoritative integer values and counts are serialized as canonical decimal strings on the JSON wire,
-so browser clients retain Python integer precision beyond `2^53-1`. Coverage always includes all five
-fields and uses explicit `null` for a non-applicable `raw_ratio` or `alert`.
+so browser clients retain Python integer precision beyond `2^53-1`. The `coverage` field is always
+present: it contains all five fields when Evolution can establish the population and is explicit
+`null` when no denominator can be established. A known empty population still uses the five-field
+`NO_POPULATION` object with `raw_ratio: null`; non-applicable alerts are also explicit `null`.
 
 The current public Fact projection still does not expose a Usage Event's native
 Span identity, so call-scoped Usage inputs produce explicit missing coverage and

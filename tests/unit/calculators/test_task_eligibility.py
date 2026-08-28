@@ -26,6 +26,7 @@ def test_eligibility_uses_covered_population_and_publishes_exclusion_counts() ->
     assert metric_slice.withholding_reason is None
     assert metric_slice.numerator == 16
     assert metric_slice.denominator == 20
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "9/10"
     assert metric_slice.measures == {
         "excluded_MISSING_DELIVERY_READING": 1,
@@ -42,4 +43,5 @@ def test_eligibility_publishes_exact_ratio_at_minimum_sample() -> None:
     metric_slice = calculate(units).slices[0]
     assert metric_slice.value is not None
     assert metric_slice.value.value == "19/20"
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "1"

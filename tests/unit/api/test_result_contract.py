@@ -282,6 +282,7 @@ def test_explicit_zero_and_sample_withholding_are_distinct() -> None:
 
     assert available.model_dump(mode="json", exclude_none=True)["value"]["value"] == "0"
     assert "value" not in insufficient.model_dump(mode="json", exclude_none=True)
+    assert insufficient.coverage is not None
     assert insufficient.coverage.numerator == 9
 
 
@@ -390,6 +391,33 @@ def test_no_population_coverage_serializes_explicit_null_fields() -> None:
         "string",
         "null",
     }
+
+
+def test_metric_slice_serializes_unestablished_coverage_as_explicit_null() -> None:
+    metric_slice = MetricSlice(
+        slice_key={},
+        state="UNAVAILABLE",
+        withholding_reason="MISSING_INPUT",
+        coverage=None,
+    )
+
+    payload = metric_slice.model_dump(mode="json")
+
+    assert "coverage" in payload
+    assert payload["coverage"] is None
+    schema = MetricSlice.model_json_schema(mode="serialization")
+    assert "coverage" in schema["required"]
+
+
+def test_metric_slice_rejects_an_omitted_coverage_field() -> None:
+    with pytest.raises(ValidationError):
+        MetricSlice.model_validate(
+            {
+                "slice_key": {},
+                "state": "UNAVAILABLE",
+                "withholding_reason": "MISSING_INPUT",
+            }
+        )
 
 
 @pytest.mark.parametrize(
