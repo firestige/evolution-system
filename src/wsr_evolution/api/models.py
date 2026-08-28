@@ -453,6 +453,14 @@ class CompareResponse(ClosedModel):
                 )
                 if (delta.state == "AVAILABLE") != compatible:
                     raise ValueError("Delta availability must match paired value compatibility")
+                if compatible:
+                    assert before is not None and before.value is not None
+                    assert delta.value is not None
+                    if (
+                        delta.value.kind != before.value.kind
+                        or delta.value.unit != before.value.unit
+                    ):
+                        raise ValueError("Delta value must retain the paired value kind and unit")
         catalog_order = {coordinate: index for index, coordinate in enumerate(CATALOG_COORDINATES)}
         ordered = tuple(
             by_key[key]
