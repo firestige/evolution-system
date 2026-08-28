@@ -122,6 +122,7 @@ async def test_reads_exact_delivery_scoped_fact_and_trace_pages() -> None:
     assert facts.route_snapshot == "facts-snapshot-a"
     assert facts.next_cursor == "next-facts"
     assert facts.facts[0].field_map["C46"] == 25
+    assert facts.facts[0].event_name == "usage"
     assert facts.facts[0].compatibility_map == {
         "C42": "money",
         "C43": "USD",
@@ -151,4 +152,3 @@ async def test_rejects_contract_drift_instead_of_coercing_observation_data() -> 
             await EvidenceHttpClient(transport).resolve_facts(
                 delivery_id="delivery-a", limit=200, cursor=None
             )
-

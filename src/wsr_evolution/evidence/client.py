@@ -429,6 +429,7 @@ class EvidenceHttpClient:
                     source_identity=_source_identity(item.source),
                     recorded_at=item.recorded_at,
                     accepted_digest=item.provenance.accepted_digest,
+                    event_name=item.compatibility.event_name,
                     completeness=item.truth.completeness,
                     availability=item.truth.availability,
                     expiry=item.truth.expiry,
