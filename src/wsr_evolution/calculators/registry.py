@@ -18,7 +18,6 @@ from .role_template_trajectory_partial_cost import SLOT as ROLE_TEMPLATE_TRAJECT
 from .task_cohort_comparison_eligibility import SLOT as TASK_COHORT_COMPARISON_ELIGIBILITY
 from .trajectory_partial_cost import SLOT as TRAJECTORY_PARTIAL_COST
 
-
 _SLOTS = (
     ROLE_TEMPLATE_REWORK_RATE,
     ROLE_TEMPLATE_TRAJECTORY_PARTIAL_COST,

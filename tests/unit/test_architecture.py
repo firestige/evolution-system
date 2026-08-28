@@ -10,7 +10,6 @@ from wsr_evolution.calculators.protocol import Calculator
 from wsr_evolution.domain.models import NormalizedMetricInput, NormalizedValue
 from wsr_evolution.domain.ports import EvidenceTaskReader, TaskPage, TaskSummary
 
-
 ROOT = Path(__file__).parents[2]
 PACKAGE = ROOT / "src" / "wsr_evolution"
 SLOT_MODULES = tuple(

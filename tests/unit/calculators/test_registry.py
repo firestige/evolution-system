@@ -1,7 +1,7 @@
 import importlib
 
-from wsr_evolution.calculators.registry import CALCULATOR_SLOTS, CATALOG_COORDINATES
-
+from wsr_evolution.calculators.registry import CALCULATOR_SLOTS
+from wsr_evolution.catalog import CATALOG_COORDINATES
 
 EXPECTED_COORDINATES = (
     "role-template-rework-rate@1.0.0",
@@ -32,7 +32,7 @@ def test_every_coordinate_has_one_importable_module_slot() -> None:
     for coordinate, slot in CALCULATOR_SLOTS.items():
         module = importlib.import_module(slot.module)
         modules.append(slot.module)
-        assert module.SLOT == slot
+        assert slot == module.SLOT
         assert slot.coordinate == coordinate
 
     assert len(set(modules)) == 14

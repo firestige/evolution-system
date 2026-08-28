@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 
 from wsr_evolution.api.models import (
     CatalogBinding,
@@ -80,7 +80,7 @@ class MismatchService:
         raise UpstreamContractMismatch("Evidence returned an unknown revision")
 
 
-async def post(service: object, payload: dict[str, object]):
+async def post(service: object, payload: dict[str, object]) -> Response:
     async with AsyncClient(
         transport=ASGITransport(app=create_app(service)),
         base_url="http://evolution.test",
@@ -151,6 +151,10 @@ async def test_upstream_failures_never_become_metric_unavailable(
 
     assert response.status_code == status
     assert response.json() == {
-        "error": {"code": code, "retryable": retryable, "detail": response.json()["error"]["detail"]}
+        "error": {
+            "code": code,
+            "retryable": retryable,
+            "detail": response.json()["error"]["detail"],
+        }
     }
     assert "result" not in response.json()
