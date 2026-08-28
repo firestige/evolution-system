@@ -20,16 +20,16 @@ than responsibilities of this service baseline.
 ## Developer preview
 
 The current candidate exposes a closed, side-effect-free compute boundary, an
-exact 12-coordinate registry, pure formulas for all 12 candidate metrics, and
-typed readers/resolvers for Task membership, Manifest projections, Facts, and
-recorded Trace nodes. Delivery, operational, Task, Role/model, Role-template,
-and exact reported-Usage calculator inputs fail closed on missing association.
+exact 12-coordinate registry, pure formulas for all 12 candidate metrics, typed
+Evidence/Workflow resolvers, and end-to-end SINGLE/FULL_COMPARE/PARTIAL_COMPARE
+orchestration. Every successful side returns the exact 12 Metric Results and a
+receipt-bound resolved read set; metric-level holes do not fail the other results.
 
-End-to-end compute orchestration and the physical projection of a Usage Event's
-native Span identity remain Wave 5 work. Until that exact call binding is exposed,
-call-scoped Usage availability/cost produces missing coverage; it is never joined
-by Delivery identity, timestamp, arrival order, or text. The 2.0 Catalog remains
-a review candidate, so **compatibility-breaking changes remain possible before
+The current public Fact projection still does not expose a Usage Event's native
+Span identity or a recorded repair-to-Role attribution. Those call-/Role-scoped
+inputs therefore produce explicit missing coverage; they are never joined by
+Delivery identity, timestamp, arrival order, or text. The 2.0 Catalog remains a
+review candidate, so **compatibility-breaking changes remain possible before
 publication.**
 
 ## Development
