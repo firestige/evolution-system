@@ -58,6 +58,7 @@ class ResolvedSelectionPopulation:
     evidence_bindings: tuple[EvidenceBinding, ...]
     input_refs: tuple[InputReference, ...]
     workflow_resolutions: tuple[WorkflowResolutionEntry, ...]
+    manifest_readings: tuple[DeliveryManifestReading, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +135,20 @@ class DeliveryObservationResolver:
                 observation_profile="1.0.0",
                 read_model_revision="1.0.0",
                 route_snapshot=trace_snapshot,
-                completion_state="EXPIRED" if trace_state == "EXPIRED" else "COMPLETE",
-                error_state="TRACE_EXPIRED" if trace_state == "EXPIRED" else None,
+                completion_state=(
+                    "EXPIRED"
+                    if trace_state == "EXPIRED"
+                    else "PARTIAL"
+                    if trace_state == "PARTIAL"
+                    else "COMPLETE"
+                ),
+                error_state=(
+                    "TRACE_EXPIRED"
+                    if trace_state == "EXPIRED"
+                    else "TRACE_PARTIAL"
+                    if trace_state == "PARTIAL"
+                    else None
+                ),
             ),
         )
         references = tuple(
@@ -326,4 +339,5 @@ class SelectionPopulationResolver:
             evidence_bindings=tuple(bindings),
             input_refs=tuple(sorted(references, key=lambda item: item.identity.encode())),
             workflow_resolutions=tuple(workflow_entries),
+            manifest_readings=tuple(reading for _, reading in sorted(readings.items())),
         )
