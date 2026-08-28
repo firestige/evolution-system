@@ -177,19 +177,32 @@ class MetricResult(ClosedModel):
         return self
 
 
+class TaskMembershipReference(ClosedModel):
+    delivery_id: str = Field(min_length=1, max_length=256)
+    manifest_digest: Digest
+    provenance_ref: str = Field(min_length=1, max_length=512)
+
+
 class TaskPopulationEntry(ClosedModel):
     task_id: TaskId
     display_name: str | None = Field(default=None, min_length=1, max_length=160)
-    delivery_ids: tuple[str, ...]
+    memberships: tuple[TaskMembershipReference, ...]
     cohort_coordinates: dict[str, str] = Field(default_factory=dict)
+    exclusions: tuple[str, ...] = ()
     terminal_reading: str | None = None
 
     @model_validator(mode="after")
     def canonicalize_entry(self) -> Self:
-        if len(set(self.delivery_ids)) != len(self.delivery_ids):
-            raise ValueError("delivery_ids must be duplicate-free")
-        object.__setattr__(self, "delivery_ids", tuple(sorted(self.delivery_ids)))
+        delivery_ids = [item.delivery_id for item in self.memberships]
+        if len(set(delivery_ids)) != len(delivery_ids):
+            raise ValueError("Task memberships must be duplicate-free by delivery_id")
+        object.__setattr__(
+            self,
+            "memberships",
+            tuple(sorted(self.memberships, key=lambda item: item.delivery_id.encode())),
+        )
         object.__setattr__(self, "cohort_coordinates", _sorted_mapping(self.cohort_coordinates))
+        object.__setattr__(self, "exclusions", tuple(sorted(self.exclusions)))
         return self
 
 
@@ -203,6 +216,9 @@ class CatalogBinding(ClosedModel):
 class EvidenceBinding(ClosedModel):
     route: Literal["/v1/evidence/tasks", "/v1/evidence/facts", "/v1/evidence/traces"]
     canonical_filter: dict[str, str]
+    contract_revision: str = Field(min_length=1, max_length=32)
+    observation_profile: str = Field(min_length=1, max_length=32)
+    read_model_revision: str = Field(min_length=1, max_length=32)
     route_snapshot: str = Field(min_length=1, max_length=512)
     completion_state: Literal["COMPLETE", "PARTIAL", "EXPIRED"]
     error_state: str | None = Field(default=None, max_length=128)
@@ -218,8 +234,9 @@ class EvidenceBinding(ClosedModel):
 
 
 class InputReference(ClosedModel):
-    kind: Literal["FACT", "TRACE_NODE"]
+    kind: Literal["TASK_MEMBERSHIP", "FACT", "TRACE_NODE"]
     identity: str = Field(min_length=1, max_length=512)
+    provenance_ref: str = Field(min_length=1, max_length=512)
 
 
 class ResolvedEvaluationContext(ClosedModel):
@@ -247,7 +264,19 @@ class ResolvedEvaluationContext(ClosedModel):
                 ),
             )
         )
-        references = tuple(sorted(self.input_refs, key=lambda item: item.identity.encode()))
+        references = tuple(
+            sorted(self.input_refs, key=lambda item: (item.kind.encode(), item.identity.encode()))
+        )
+        binding_keys = [
+            (item.route, json.dumps(item.canonical_filter, sort_keys=True)) for item in bindings
+        ]
+        reference_keys = [(item.kind, item.identity) for item in references]
+        if len({item.task_id for item in population}) != len(population):
+            raise ValueError("task_population must be duplicate-free")
+        if len(set(binding_keys)) != len(binding_keys):
+            raise ValueError("evidence_bindings must be duplicate-free")
+        if len(set(reference_keys)) != len(reference_keys):
+            raise ValueError("input_refs must be duplicate-free")
         object.__setattr__(self, "task_population", population)
         object.__setattr__(self, "evidence_bindings", bindings)
         object.__setattr__(self, "input_refs", references)
@@ -285,19 +314,22 @@ class SideError(ClosedModel):
 
 class DeltaEntry(ClosedModel):
     metric_coordinate: str
+    slice_key: dict[str, str]
     state: Literal["AVAILABLE", "WITHHELD", "SIDE_UNRESOLVED"]
     value: ExactValue | None = None
     withholding_reason: str | None = Field(default=None, max_length=128)
+    direction: Literal["INCREASE", "DECREASE", "NO_CHANGE"] | None = None
 
     @model_validator(mode="after")
     def validate_delta(self) -> Self:
+        object.__setattr__(self, "slice_key", _sorted_mapping(self.slice_key))
         if self.metric_coordinate not in CATALOG_COORDINATES:
             raise ValueError("Delta coordinate is not in the bound Evaluation Catalog")
         if self.state == "AVAILABLE":
-            if self.value is None or self.withholding_reason is not None:
+            if self.value is None or self.withholding_reason is not None or self.direction is None:
                 raise ValueError("available Delta requires value without withholding")
-        elif self.value is not None:
-            raise ValueError("withheld Delta cannot contain a value")
+        elif self.value is not None or self.direction is not None:
+            raise ValueError("withheld Delta cannot contain a value or direction")
         return self
 
 
@@ -320,11 +352,33 @@ class CompareResponse(ClosedModel):
 
     @model_validator(mode="after")
     def validate_compare_shape(self) -> Self:
-        by_coordinate = {entry.metric_coordinate: entry for entry in self.deltas}
-        if len(by_coordinate) != len(self.deltas) or set(by_coordinate) != set(CATALOG_COORDINATES):
-            raise ValueError("compare must contain one Delta entry per catalog coordinate")
-        ordered = tuple(by_coordinate[coordinate] for coordinate in CATALOG_COORDINATES)
+        def delta_key(entry: DeltaEntry) -> tuple[str, str]:
+            return (
+                entry.metric_coordinate,
+                json.dumps(entry.slice_key, sort_keys=True, separators=(",", ":")),
+            )
+
+        by_key = {delta_key(entry): entry for entry in self.deltas}
+        if len(by_key) != len(self.deltas):
+            raise ValueError("Delta metric/slice identities must be unique")
         results = sum(item.tag == "SIDE_RESULT" for item in (self.left, self.right))
+        result_sides = [item for item in (self.left, self.right) if item.tag == "SIDE_RESULT"]
+        expected = {
+            (
+                f"{result.metric_id}@{result.metric_version}",
+                json.dumps(metric_slice.slice_key, sort_keys=True, separators=(",", ":")),
+            )
+            for side in result_sides
+            for result in side.metric_results
+            for metric_slice in result.slices
+        }
+        if set(by_key) != expected:
+            raise ValueError("compare must contain one Delta entry per resolved metric slice")
+        catalog_order = {coordinate: index for index, coordinate in enumerate(CATALOG_COORDINATES)}
+        ordered = tuple(
+            by_key[key]
+            for key in sorted(expected, key=lambda key: (catalog_order[key[0]], key[1].encode()))
+        )
         if self.status == "PARTIAL_COMPARE":
             if results != 1 or any(entry.state != "SIDE_UNRESOLVED" for entry in ordered):
                 raise ValueError("partial compare requires one side result and unresolved Deltas")
