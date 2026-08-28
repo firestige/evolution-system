@@ -61,3 +61,12 @@ class OperationalCallUnit:
         assert provider is not None and model is not None
         assert role is not None and runtime is not None
         return (provider, model, role, runtime)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskMetricUnit:
+    task_id: str
+    terminal_outcome: str | None
+    classification: str
+    covered: bool
+    provenance_refs: tuple[str, ...]
