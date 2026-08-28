@@ -542,9 +542,15 @@ async def test_retention_partial_trace_excludes_delivery_but_remains_in_receipt(
 
     assert isinstance(response, SingleResponse)
     by_id = {item.metric_id: item for item in response.result.metric_results}
-    assert by_id["operational-latency-ms"].slices[0].coverage.denominator == 0
-    assert by_id["operational-token-usage"].slices[0].coverage.denominator == 0
-    assert by_id["delivery-terminal-outcome-rate"].slices[0].coverage.denominator == 0
+    empty_coverages = [
+        by_id[metric_id].slices[0].coverage
+        for metric_id in (
+            "operational-latency-ms",
+            "operational-token-usage",
+            "delivery-terminal-outcome-rate",
+        )
+    ]
+    assert all(item is not None and item.denominator == 0 for item in empty_coverages)
     assert response.result.receipt.population_state == "EXPIRED"
     assert response.result.receipt.task_population[0].exclusions == ("EXPIRED_DELIVERY",)
     trace_binding = next(
@@ -594,8 +600,14 @@ async def test_any_expired_fact_excludes_the_whole_delivery_population() -> None
 
     assert isinstance(response, SingleResponse)
     by_id = {item.metric_id: item for item in response.result.metric_results}
-    assert by_id["delivery-terminal-outcome-rate"].slices[0].coverage.denominator == 0
-    assert by_id["task-cohort-comparison-eligibility"].slices[0].coverage.denominator == 0
+    empty_coverages = [
+        by_id[metric_id].slices[0].coverage
+        for metric_id in (
+            "delivery-terminal-outcome-rate",
+            "task-cohort-comparison-eligibility",
+        )
+    ]
+    assert all(item is not None and item.denominator == 0 for item in empty_coverages)
     assert response.result.receipt.population_state == "EXPIRED"
     assert response.result.receipt.task_population[0].exclusions == ("EXPIRED_DELIVERY",)
     assert any(item.identity == "fact-expired" for item in response.result.receipt.input_refs)
@@ -616,8 +628,10 @@ async def test_expired_delivery_does_not_remove_active_sibling_from_task_populat
     assert isinstance(response, SingleResponse)
     by_id = {item.metric_id: item for item in response.result.metric_results}
     outcome = by_id["delivery-terminal-outcome-rate"].slices[0]
+    assert outcome.coverage is not None
     assert (outcome.numerator, outcome.denominator, outcome.coverage.raw_ratio) == (1, 1, "1")
     task = by_id["task-cohort-comparison-eligibility"].slices[0]
+    assert task.coverage is not None
     assert (task.denominator, task.coverage.denominator) == (1, 1)
     assert response.result.receipt.task_population[0].exclusions == ("EXPIRED_DELIVERY",)
     assert response.result.receipt.population_state == "EXPIRED"

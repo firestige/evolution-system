@@ -245,7 +245,7 @@ class MetricSlice(ClosedModel):
     numerator: NonnegativeExactInteger | None = None
     denominator: NonnegativeExactInteger | None = None
     contributing_count: NonnegativeExactInteger | None = None
-    coverage: Coverage
+    coverage: Coverage | None
     compatibility: dict[str, str] = Field(default_factory=dict)
     exclusions: tuple[str, ...] = ()
     missing_inputs: tuple[str, ...] = ()

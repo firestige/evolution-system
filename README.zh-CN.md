@@ -21,8 +21,9 @@ candidate metric pure formula、typed Evidence/Workflow resolver，以及端到�
 SINGLE/FULL_COMPARE/PARTIAL_COMPARE 编排。每个成功 side 都返回恰好 12 项 Metric
 Results 与绑定 resolved read set 的 receipt；单项 coverage 空洞不会使其他结果失败。
 JSON wire 将 authoritative integer value/count 序列化为 canonical decimal string，因此 browser
-client 能保留超过 `2^53-1` 的 Python integer 精度。Coverage 始终包含五个字段；不适用的
-`raw_ratio` 或 `alert` 显式为 `null`。
+client 能保留超过 `2^53-1` 的 Python integer 精度。`coverage` 字段始终存在：Evolution
+能建立候选总体时包含五个字段，无法建立 denominator 时显式为 `null`。已知候选总体为空
+仍使用五字段 `NO_POPULATION` 对象并令 `raw_ratio: null`；不适用的 `alert` 也显式为 `null`。
 
 当前 public Fact projection 仍不暴露 Usage Event native Span identity，因此 call-scoped
 Usage input 会产生显式 missing coverage；绝不按 Delivery identity、timestamp、arrival

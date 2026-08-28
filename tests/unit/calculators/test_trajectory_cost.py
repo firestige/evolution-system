@@ -28,6 +28,7 @@ def test_trajectory_cost_sums_only_exact_usage_group_and_exposes_holes() -> None
     assert metric_slice.value.kind == "MONEY"
     assert metric_slice.value.value == 210
     assert metric_slice.value.unit == "USD"
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "20/21"
     assert metric_slice.missing_inputs == ("reported_usage:d-20",)
     assert "cost_basis" not in metric_slice.compatibility

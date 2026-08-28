@@ -24,6 +24,7 @@ def test_role_template_rework_uses_only_covered_deliveries() -> None:
     assert metric_slice.value is not None and metric_slice.value.value == "1/5"
     assert metric_slice.numerator == 4
     assert metric_slice.denominator == 20
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "20/21"
     assert metric_slice.missing_inputs == ("repair_relationship:delivery-20",)
 
@@ -47,6 +48,7 @@ def test_role_template_cost_keeps_template_and_usage_coordinates_exact() -> None
     )
     metric_slice = template_cost(deliveries, usage).slices[0]
     assert metric_slice.value is not None and metric_slice.value.value == 40
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "20/21"
     assert metric_slice.compatibility["role_prompt_digest"] == f"sha256:{'a' * 64}"
     assert "cost_basis" not in metric_slice.compatibility
@@ -61,6 +63,7 @@ def test_role_template_rework_keeps_template_slice_below_minimum_sample() -> Non
     assert metric_slice.value is None
     assert metric_slice.numerator == 0
     assert metric_slice.denominator == 19
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "1"
 
 
@@ -88,5 +91,6 @@ def test_expired_repair_input_leaves_rework_candidate_population() -> None:
     metric_slice = rework((*active, expired)).slices[0]
 
     assert metric_slice.denominator == 20
+    assert metric_slice.coverage is not None
     assert metric_slice.coverage.raw_ratio == "1"
     assert metric_slice.missing_inputs == ()
