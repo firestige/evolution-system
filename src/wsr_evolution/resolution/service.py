@@ -13,7 +13,7 @@ from wsr_evolution.api.models import (
     WorkflowResolutionAttempt,
     WorkflowResolutionEntry,
 )
-from wsr_evolution.application import UpstreamContractMismatch
+from wsr_evolution.application import ResolutionBoundExceeded, UpstreamContractMismatch
 from wsr_evolution.domain.ports import (
     DeliveryManifestReading,
     FactPage,
@@ -71,15 +71,42 @@ class ResolvedDeliveryObservation:
     input_refs: tuple[InputReference, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ResolutionLimits:
+    max_deliveries_per_side: int = 500
+    max_pages_per_traversal: int = 20
+    max_input_records_per_side: int = 100_000
+    side_deadline_seconds: float = 120.0
+
+    def __post_init__(self) -> None:
+        if (
+            min(
+                self.max_deliveries_per_side,
+                self.max_pages_per_traversal,
+                self.max_input_records_per_side,
+            )
+            <= 0
+            or self.side_deadline_seconds <= 0
+        ):
+            raise ValueError("resolution limits must be positive")
+
+
 class DeliveryObservationResolver:
-    def __init__(self, evidence: ObservationEvidenceReader) -> None:
+    def __init__(
+        self, evidence: ObservationEvidenceReader, *, limits: ResolutionLimits | None = None
+    ) -> None:
         self._evidence = evidence
+        self._limits = limits or ResolutionLimits()
 
     async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
         facts: list[FactReading] = []
         fact_cursor: str | None = None
         fact_snapshot: str | None = None
+        fact_pages = 0
+        seen_fact_cursors: set[str] = set()
         while True:
+            if fact_pages >= self._limits.max_pages_per_traversal:
+                raise ResolutionBoundExceeded("Facts page bound exceeded")
             fact_page = await self._evidence.resolve_facts(
                 delivery_id=delivery_id, limit=200, cursor=fact_cursor
             )
@@ -87,15 +114,23 @@ class DeliveryObservationResolver:
                 raise UpstreamContractMismatch("Evidence Facts route snapshot drift")
             fact_snapshot = fact_page.route_snapshot
             facts.extend(fact_page.facts)
+            fact_pages += 1
             fact_cursor = fact_page.next_cursor
             if fact_cursor is None:
                 break
+            if fact_cursor in seen_fact_cursors:
+                raise ResolutionBoundExceeded("Facts cursor repeated")
+            seen_fact_cursors.add(fact_cursor)
 
         nodes: list[TraceNodeReading] = []
         trace_cursor: str | None = None
         trace_snapshot: str | None = None
         trace_state: str | None = None
+        trace_pages = 0
+        seen_trace_cursors: set[str] = set()
         while True:
+            if trace_pages >= self._limits.max_pages_per_traversal:
+                raise ResolutionBoundExceeded("Traces page bound exceeded")
             trace_page = await self._evidence.resolve_traces(
                 delivery_id=delivery_id, limit=200, cursor=trace_cursor
             )
@@ -106,9 +141,13 @@ class DeliveryObservationResolver:
             trace_snapshot = trace_page.route_snapshot
             trace_state = trace_page.trace_state
             nodes.extend(trace_page.nodes)
+            trace_pages += 1
             trace_cursor = trace_page.next_cursor
             if trace_cursor is None:
                 break
+            if trace_cursor in seen_trace_cursors:
+                raise ResolutionBoundExceeded("Traces cursor repeated")
+            seen_trace_cursors.add(trace_cursor)
 
         if fact_snapshot is None or trace_snapshot is None or trace_state is None:
             raise UpstreamContractMismatch("Evidence observation traversal has no coordinate")
@@ -232,9 +271,12 @@ class SelectionPopulationResolver:
         self,
         evidence: SelectionEvidenceReader,
         workflows: ManifestWorkflowResolver,
+        *,
+        limits: ResolutionLimits | None = None,
     ) -> None:
         self._evidence = evidence
         self._workflows = workflows
+        self._limits = limits or ResolutionLimits()
 
     async def resolve(
         self, selection: EvaluationSelection, *, as_of: datetime
@@ -244,11 +286,16 @@ class SelectionPopulationResolver:
         bindings: list[EvidenceBinding] = []
         references: list[InputReference] = []
         all_memberships: list[tuple[str, TaskMembershipReference]] = []
+        unique_delivery_ids: set[str] = set()
         for task_id in selection.task_ids:
             cursor: str | None = None
             route_snapshot: str | None = None
             memberships: list[TaskMembershipReference] = []
+            page_count = 0
+            seen_cursors: set[str] = set()
             while True:
+                if page_count >= self._limits.max_pages_per_traversal:
+                    raise ResolutionBoundExceeded("Task membership page bound exceeded")
                 page = await self._evidence.resolve_membership(
                     task_id=task_id,
                     as_of=as_of,
@@ -272,6 +319,9 @@ class SelectionPopulationResolver:
                         recorded_at=item.recorded_at,
                     )
                     memberships.append(reference)
+                    unique_delivery_ids.add(item.delivery_id)
+                    if len(unique_delivery_ids) > self._limits.max_deliveries_per_side:
+                        raise ResolutionBoundExceeded("unique Delivery bound exceeded")
                     references.append(
                         InputReference(
                             kind="TASK_MEMBERSHIP",
@@ -279,9 +329,13 @@ class SelectionPopulationResolver:
                             provenance_ref=item.source_identity,
                         )
                     )
+                page_count += 1
                 cursor = page.next_cursor
                 if cursor is None:
                     break
+                if cursor in seen_cursors:
+                    raise ResolutionBoundExceeded("Task membership cursor repeated")
+                seen_cursors.add(cursor)
             delivery_ids = [item.delivery_id for item in memberships]
             if len(set(delivery_ids)) != len(delivery_ids) or route_snapshot is None:
                 raise UpstreamContractMismatch("Evidence Task traversal is inconsistent")
