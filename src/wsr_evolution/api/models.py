@@ -146,7 +146,7 @@ class Coverage(ClosedModel):
 
 
 class ExactValue(ClosedModel):
-    kind: Literal["COUNT", "RATIO", "MONEY", "DURATION_MS", "BOOLEAN"]
+    kind: Literal["COUNT", "QUANTITY", "RATIO", "MONEY", "DURATION_MS", "BOOLEAN"]
     value: StrictInt | StrictBool | CanonicalDecimal | CanonicalRational
     unit: str = Field(min_length=1, max_length=64)
     precision: StrictInt | None = Field(default=None, ge=0, le=18)
@@ -170,7 +170,7 @@ class ExactValue(ClosedModel):
             if not isinstance(self.value, bool):
                 raise ValueError("boolean values require a strict boolean")
         elif isinstance(self.value, bool) or not isinstance(self.value, int):
-            raise ValueError("count, money and duration values require exact integers")
+            raise ValueError("count, quantity, money and duration values require exact integers")
         elif self.precision is not None or self.rounding is not None:
             raise ValueError("integer values do not declare decimal precision or rounding")
         return self
