@@ -1,5 +1,7 @@
 from types import MappingProxyType
 
+from wsr_evolution.catalog import CATALOG_COORDINATES
+
 from .delivery_cycle_time_ms import SLOT as DELIVERY_CYCLE_TIME_MS
 from .delivery_stage_reach import SLOT as DELIVERY_STAGE_REACH
 from .delivery_terminal_outcome_rate import SLOT as DELIVERY_TERMINAL_OUTCOME_RATE
@@ -34,7 +36,8 @@ _SLOTS = (
     DIRECT_EVIDENCE_BASIS_RATE,
 )
 
-CATALOG_COORDINATES = tuple(slot.coordinate for slot in _SLOTS)
+if tuple(slot.coordinate for slot in _SLOTS) != CATALOG_COORDINATES:
+    raise RuntimeError("calculator slots do not match the bound Evaluation Catalog")
 CALCULATOR_SLOTS: MappingProxyType[str, CalculatorSlot] = MappingProxyType(
     {slot.coordinate: slot for slot in _SLOTS}
 )
