@@ -4,7 +4,13 @@ from wsr_evolution.domain.ports import FactReading
 from wsr_evolution.normalization.usage import normalize_reported_usage
 
 
-def usage(fact_id: str, value: int | float, *, kind: str = "money") -> FactReading:
+def usage(
+    fact_id: str,
+    value: int | float,
+    *,
+    kind: str = "money",
+    completeness: str = "FINAL",
+) -> FactReading:
     return FactReading(
         fact_id=fact_id,
         kind="EVENT_CONTRIBUTION",
@@ -12,7 +18,7 @@ def usage(fact_id: str, value: int | float, *, kind: str = "money") -> FactReadi
         recorded_at=datetime(2026, 8, 28, tzinfo=UTC),
         accepted_digest=fact_id[0] * 64,
         event_name="usage",
-        completeness="FINAL",
+        completeness=completeness,
         availability="AVAILABLE",
         expiry="ACTIVE",
         fields=(
@@ -36,3 +42,11 @@ def test_usage_normalization_preserves_exact_reported_dimensions_and_integer_val
 
 def test_non_integral_usage_is_not_rounded_or_estimated() -> None:
     assert normalize_reported_usage("delivery-a", (usage("a-usage", 25.5),)) == ()
+
+
+def test_usage_lower_bound_truth_is_preserved_for_additive_metrics() -> None:
+    units = normalize_reported_usage(
+        "delivery-a", (usage("a-usage", 25, completeness="LOWER_BOUND"),)
+    )
+
+    assert units[0].lower_bound is True

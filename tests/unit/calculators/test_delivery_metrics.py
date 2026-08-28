@@ -1,3 +1,5 @@
+from fractions import Fraction
+
 from wsr_evolution.calculators.delivery_cycle_time_ms import calculate as cycle_time
 from wsr_evolution.calculators.delivery_stage_reach import calculate as stage_reach
 from wsr_evolution.calculators.delivery_terminal_outcome_rate import calculate as outcome_rate
@@ -8,13 +10,15 @@ def unit(
     delivery_id: str,
     *,
     outcome: str | None,
-    elapsed_ms: int | None,
+    elapsed_ms: int | float | None,
     stages: tuple[str, ...] = (),
 ) -> DeliveryMetricUnit:
     return DeliveryMetricUnit(
         delivery_id=delivery_id,
         terminal_outcome=outcome,
-        elapsed_time_ms=elapsed_ms,
+        elapsed_time_ms=(
+            Fraction(str(elapsed_ms)) if isinstance(elapsed_ms, float) else elapsed_ms
+        ),
         reached_stages=stages,
         provenance_refs=(f"fact:{delivery_id}",),
     )
@@ -37,7 +41,10 @@ def test_terminal_outcome_publishes_one_exact_rate_per_recorded_category() -> No
     ]
     assert [item.value.value for item in result.slices if item.value] == ["1/3", "2/3"]
     assert all(item.denominator == 3 for item in result.slices)
-    assert all(item.coverage.raw_ratio == "1" for item in result.slices)
+    assert all(item.coverage.raw_ratio == "3/4" for item in result.slices)
+    assert all(
+        item.missing_inputs == ("delivery.terminal_outcome:d-open",) for item in result.slices
+    )
 
 
 def test_cycle_time_uses_only_covered_terminal_deliveries_without_zero_fill() -> None:
@@ -76,3 +83,11 @@ def test_stage_reach_tolerates_per_delivery_holes_and_keeps_exact_stage_identity
     assert all(item.denominator == 2 for item in result.slices)
     assert all(item.coverage.raw_ratio == "2/3" for item in result.slices)
     assert all(item.missing_inputs == ("delivery.stage.reached:d-3",) for item in result.slices)
+
+
+def test_cycle_time_preserves_a_legal_fractional_c55_without_float_authority() -> None:
+    metric_slice = cycle_time((unit("d-1", outcome="SUCCEEDED", elapsed_ms=812.5),)).slices[0]
+
+    assert metric_slice.value is not None
+    assert metric_slice.value.value == "1625/2"
+    assert metric_slice.measures == {"sum_ms": "812.5"}

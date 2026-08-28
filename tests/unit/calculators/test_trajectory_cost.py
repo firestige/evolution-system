@@ -2,7 +2,9 @@ from wsr_evolution.calculators.trajectory_partial_cost import calculate
 from wsr_evolution.domain.models import ReportedUsageUnit
 
 
-def usage(delivery: str, value: int, *, unit: str = "USD") -> ReportedUsageUnit:
+def usage(
+    delivery: str, value: int, *, unit: str = "USD", lower_bound: bool = False
+) -> ReportedUsageUnit:
     return ReportedUsageUnit(
         usage_identity=f"usage:{delivery}",
         delivery_id=delivery,
@@ -12,6 +14,7 @@ def usage(delivery: str, value: int, *, unit: str = "USD") -> ReportedUsageUnit:
         source_id="invoice",
         value=value,
         provenance_refs=(f"fact:{delivery}",),
+        lower_bound=lower_bound,
     )
 
 
@@ -45,3 +48,15 @@ def test_money_and_tokens_or_different_units_never_combine() -> None:
         ("EUR", 40),
         ("USD", 20),
     ]
+
+
+def test_lower_bound_usage_sum_remains_a_lower_bound_metric_result() -> None:
+    deliveries = tuple(f"d-{index:02d}" for index in range(20))
+    units = tuple(
+        usage(delivery, 1, lower_bound=index == 0) for index, delivery in enumerate(deliveries)
+    )
+
+    metric_slice = calculate(deliveries, units).slices[0]
+
+    assert metric_slice.state == "LOWER_BOUND"
+    assert metric_slice.value is not None and metric_slice.value.value == 20

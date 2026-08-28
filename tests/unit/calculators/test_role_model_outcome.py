@@ -36,3 +36,17 @@ def test_duplicate_task_in_same_cohort_fails_closed() -> None:
         assert "duplicate Task/cohort" in str(error)
     else:
         raise AssertionError("duplicate Task/cohort unexpectedly accepted")
+
+
+def test_role_model_outcome_keeps_exact_slices_below_minimum_sample() -> None:
+    result = calculate(tuple(task(index, "SUCCEEDED") for index in range(19)))
+
+    assert len(result.slices) == 1
+    metric_slice = result.slices[0]
+    assert metric_slice.slice_key["outcome"] == "SUCCEEDED"
+    assert metric_slice.state == "UNAVAILABLE"
+    assert metric_slice.withholding_reason == "SAMPLE_INSUFFICIENT"
+    assert metric_slice.value is None
+    assert metric_slice.numerator == 19
+    assert metric_slice.denominator == 19
+    assert metric_slice.coverage.raw_ratio == "1"

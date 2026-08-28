@@ -20,6 +20,7 @@ from wsr_evolution.api.models import (
 from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
 from wsr_evolution.catalog import CATALOG_COORDINATES, CATALOG_SEMANTIC_DIGEST
 from wsr_evolution.compute import EvolutionComputeService
+from wsr_evolution.domain.models import ReportedUsageUnit, RoleTemplateTaskUnit
 from wsr_evolution.domain.ports import FactReading, TraceNodeReading
 from wsr_evolution.resolution.service import (
     ResolvedDeliveryObservation,
@@ -184,14 +185,31 @@ class ConflictingObservationStub(ObservationStub):
             fact_id="fact-conflict",
             fields=(("C10", "FAILED"),),
         )
-        return ResolvedDeliveryObservation(
-            delivery_id=resolved.delivery_id,
-            facts=(*resolved.facts, conflicting),
-            trace_nodes=resolved.trace_nodes,
-            trace_state=resolved.trace_state,
-            evidence_bindings=resolved.evidence_bindings,
-            input_refs=resolved.input_refs,
+        return replace(resolved, facts=(*resolved.facts, conflicting))
+
+
+class FutureFactObservationStub(ObservationStub):
+    async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
+        resolved = await super().resolve(delivery_id=delivery_id)
+        future = replace(
+            delivery_summary(),
+            fact_id="fact-future",
+            recorded_at=datetime(2026, 8, 28, 1, 0, 1, tzinfo=UTC),
+            fields=(("C10", "FAILED"),),
         )
+        return replace(resolved, facts=(*resolved.facts, future))
+
+
+class PartialTraceObservationStub(ObservationStub):
+    async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
+        resolved = await super().resolve(delivery_id=delivery_id)
+        return replace(resolved, trace_state="PARTIAL")
+
+
+class ExpiredTraceObservationStub(ObservationStub):
+    async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
+        resolved = await super().resolve(delivery_id=delivery_id)
+        return replace(resolved, trace_state="EXPIRED", trace_nodes=())
 
 
 @pytest.mark.asyncio
@@ -323,3 +341,107 @@ async def test_conflicting_evidence_reading_is_a_typed_upstream_mismatch() -> No
                 selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_observation_after_side_cutoff_cannot_change_metric_results() -> None:
+    response = await EvolutionComputeService(
+        PopulationStub(), FutureFactObservationStub(), now=lambda: NOW
+    ).compute(
+        SingleRequest(
+            api_version=1,
+            mode="SINGLE",
+            selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+        )
+    )
+
+    assert isinstance(response, SingleResponse)
+    outcome = response.result.metric_results[7].slices[0]
+    assert outcome.slice_key == {"outcome": "SUCCEEDED"}
+    assert outcome.value is not None and outcome.value.value == "1"
+    assert all(item.identity != "fact-future" for item in response.result.receipt.input_refs)
+
+
+@pytest.mark.asyncio
+async def test_partial_trace_never_publishes_complete_operational_measurements() -> None:
+    response = await EvolutionComputeService(
+        PopulationStub(), PartialTraceObservationStub(), now=lambda: NOW
+    ).compute(
+        SingleRequest(
+            api_version=1,
+            mode="SINGLE",
+            selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+        )
+    )
+
+    assert isinstance(response, SingleResponse)
+    by_id = {item.metric_id: item for item in response.result.metric_results}
+    assert by_id["operational-latency-ms"].slices[0].value is None
+    assert by_id["operational-token-usage"].slices[0].value is None
+    assert by_id["role-model-task-outcome-rate"].slices[0].value is None
+
+
+@pytest.mark.asyncio
+async def test_expired_trace_remains_distinct_in_metric_and_receipt_truth() -> None:
+    response = await EvolutionComputeService(
+        PopulationStub(), ExpiredTraceObservationStub(), now=lambda: NOW
+    ).compute(
+        SingleRequest(
+            api_version=1,
+            mode="SINGLE",
+            selection=EvaluationSelection(selection_version=1, task_ids=("task-a",)),
+        )
+    )
+
+    assert isinstance(response, SingleResponse)
+    by_id = {item.metric_id: item for item in response.result.metric_results}
+    assert by_id["operational-latency-ms"].slices[0].state == "EXPIRED"
+    assert by_id["operational-latency-ms"].slices[0].withholding_reason == "EXPIRED_INPUT"
+    assert response.result.receipt.population_state == "EXPIRED"
+
+
+def test_role_template_usage_is_bound_by_exact_task_delivery_membership() -> None:
+    task = RoleTemplateTaskUnit(
+        task_id="task-a",
+        role_id="writer",
+        role_prompt_identity="role.writer",
+        role_prompt_digest=f"sha256:{'3' * 64}",
+        repair_observed=None,
+        provenance_refs=("manifest-a",),
+    )
+    usage = ReportedUsageUnit(
+        usage_identity="usage-a",
+        delivery_id="delivery-a",
+        kind="money",
+        unit="USD-micros",
+        source="provider",
+        source_id="invoice-a",
+        value=25,
+        provenance_refs=("fact-a",),
+    )
+
+    units = EvolutionComputeService._role_template_usage_units(
+        (
+            TaskPopulationEntry(
+                task_id="task-a",
+                memberships=(
+                    TaskMembershipReference(
+                        delivery_id="delivery-a",
+                        manifest_digest="a" * 64,
+                        accepted_digest="b" * 64,
+                        profile_version="2.0.0",
+                        source_identity="event:membership",
+                        recorded_at=NOW,
+                    ),
+                ),
+            ),
+        ),
+        (task,),
+        (usage,),
+    )
+
+    assert len(units) == 1
+    assert units[0].task_id == "task-a"
+    assert units[0].template == task.template
+    assert units[0].compatibility == usage.compatibility
+    assert units[0].value == 25

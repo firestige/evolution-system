@@ -65,3 +65,18 @@ def test_token_directions_are_independent_and_missing_never_contributes_zero() -
     assert output_slice.value is not None and output_slice.value.value == 4
     assert output_slice.coverage.raw_ratio == "1/2"
     assert output_slice.missing_inputs == ("model_call.output_tokens:a/2",)
+
+
+def test_known_operational_slices_remain_visible_when_measurements_are_missing() -> None:
+    missing = call("a/1", duration_ns=None, input_tokens=None, output_tokens=None)
+
+    latency_slice = latency((missing,)).slices[0]
+    assert latency_slice.slice_key["model"] == "gpt-5"
+    assert latency_slice.value is None
+    assert latency_slice.withholding_reason == "MISSING_INPUT"
+    assert latency_slice.coverage.raw_ratio == "0"
+
+    token_slices = tokens((missing,)).slices
+    assert [item.slice_key["direction"] for item in token_slices] == ["input", "output"]
+    assert all(item.value is None for item in token_slices)
+    assert all(item.coverage.raw_ratio == "0" for item in token_slices)
