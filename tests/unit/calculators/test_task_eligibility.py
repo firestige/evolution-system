@@ -22,14 +22,16 @@ def test_eligibility_uses_covered_population_and_publishes_exclusion_counts() ->
 
     result = calculate(units)
     metric_slice = result.slices[0]
-    assert metric_slice.value is None
-    assert metric_slice.withholding_reason == "SAMPLE_INSUFFICIENT"
+    assert metric_slice.value is not None and metric_slice.value.value == "4/5"
+    assert metric_slice.withholding_reason is None
     assert metric_slice.numerator == 16
-    assert metric_slice.denominator == 18
+    assert metric_slice.denominator == 20
     assert metric_slice.coverage.raw_ratio == "9/10"
     assert metric_slice.measures == {
+        "excluded_MISSING_DELIVERY_READING": 1,
         "excluded_MIXED_DELIVERY_OUTCOMES": 1,
         "excluded_OPEN_DELIVERY": 1,
+        "excluded_UNDEFINED_TASK_MEMBERSHIP": 1,
     }
 
 

@@ -58,3 +58,16 @@ def test_usage_for_unknown_call_is_rejected_instead_of_delivery_or_time_joined()
         assert "exact model call" in str(error)
     else:
         raise AssertionError("unbound Usage unexpectedly accepted")
+
+
+def test_missing_usage_classification_keeps_known_cohort_and_denominator() -> None:
+    metric_slice = availability((call(1), call(2)), ()).slices[0]
+
+    assert metric_slice.slice_key["model"] == "gpt-5"
+    assert metric_slice.value is None
+    assert metric_slice.withholding_reason == "MISSING_INPUT"
+    assert metric_slice.coverage.raw_ratio == "0"
+    assert metric_slice.missing_inputs == (
+        "usage_source_classification:trace/1",
+        "usage_source_classification:trace/2",
+    )
