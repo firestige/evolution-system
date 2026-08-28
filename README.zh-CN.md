@@ -49,6 +49,20 @@ make build   # 构建 wheel 与源码包
 make check   # 运行非容器验收门
 ```
 
+## 本地 runtime image
+
+Image 同时绑定 Evolution source 与 pinned Workflow DSL 2.0 candidate checker，因此必须从
+superproject root 构建：
+
+```sh
+docker build -f evolution-system/Dockerfile -t wsr-evolution:local .
+```
+
+Process 要求 `WSR_EVOLUTION_CONFIG` 指向 mounted closed JSON file。以
+`deployment/evolution.example.json` 为起点，按期望尝试顺序配置一到八个 public GitHub
+source；需要时只能降低其中的 safety limits。该文件没有 database/provider credential 字段。
+Container port `8000` 只在私网使用；`GET /healthz` 仅证明 local process liveness。
+
 ## 获取源码
 
 本仓库通常作为 [workflow-self-recursive](https://github.com/firestige/workflow-self-recursive)

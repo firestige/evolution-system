@@ -2,7 +2,7 @@ from typing import cast
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from wsr_evolution.api.models import ComputeRequest, ComputeResponse
 from wsr_evolution.application import (
@@ -28,7 +28,17 @@ def _error(status: int, code: str, retryable: bool, detail: str) -> JSONResponse
 
 def create_app(service: object) -> FastAPI:
     compute_service = cast(ComputeService, service)
-    app = FastAPI(title="wsr-evolution", version="0.1.0")
+    app = FastAPI(
+        title="wsr-evolution",
+        version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+
+    @app.get("/healthz", response_class=PlainTextResponse)
+    async def health() -> str:
+        return "ok\n"
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_request: object, error: RequestValidationError) -> JSONResponse:
