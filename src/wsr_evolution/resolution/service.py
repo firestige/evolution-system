@@ -16,7 +16,11 @@ from wsr_evolution.api.models import (
 from wsr_evolution.application import UpstreamContractMismatch
 from wsr_evolution.domain.ports import (
     DeliveryManifestReading,
+    FactPage,
+    FactReading,
     TaskMembershipPage,
+    TraceNodeReading,
+    TracePage,
 )
 from wsr_evolution.workflow_sources.resolution import WorkflowResolution
 
@@ -38,12 +42,133 @@ class ManifestWorkflowResolver(Protocol):
     async def resolve(self, reading: DeliveryManifestReading) -> WorkflowResolution: ...
 
 
+class ObservationEvidenceReader(Protocol):
+    async def resolve_facts(
+        self, *, delivery_id: str, limit: int, cursor: str | None
+    ) -> FactPage: ...
+
+    async def resolve_traces(
+        self, *, delivery_id: str, limit: int, cursor: str | None
+    ) -> TracePage: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedSelectionPopulation:
     task_population: tuple[TaskPopulationEntry, ...]
     evidence_bindings: tuple[EvidenceBinding, ...]
     input_refs: tuple[InputReference, ...]
     workflow_resolutions: tuple[WorkflowResolutionEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDeliveryObservation:
+    delivery_id: str
+    facts: tuple[FactReading, ...]
+    trace_nodes: tuple[TraceNodeReading, ...]
+    trace_state: str
+    evidence_bindings: tuple[EvidenceBinding, ...]
+    input_refs: tuple[InputReference, ...]
+
+
+class DeliveryObservationResolver:
+    def __init__(self, evidence: ObservationEvidenceReader) -> None:
+        self._evidence = evidence
+
+    async def resolve(self, *, delivery_id: str) -> ResolvedDeliveryObservation:
+        facts: list[FactReading] = []
+        fact_cursor: str | None = None
+        fact_snapshot: str | None = None
+        while True:
+            fact_page = await self._evidence.resolve_facts(
+                delivery_id=delivery_id, limit=200, cursor=fact_cursor
+            )
+            if fact_snapshot is not None and fact_page.route_snapshot != fact_snapshot:
+                raise UpstreamContractMismatch("Evidence Facts route snapshot drift")
+            fact_snapshot = fact_page.route_snapshot
+            facts.extend(fact_page.facts)
+            fact_cursor = fact_page.next_cursor
+            if fact_cursor is None:
+                break
+
+        nodes: list[TraceNodeReading] = []
+        trace_cursor: str | None = None
+        trace_snapshot: str | None = None
+        trace_state: str | None = None
+        while True:
+            trace_page = await self._evidence.resolve_traces(
+                delivery_id=delivery_id, limit=200, cursor=trace_cursor
+            )
+            if trace_snapshot is not None and trace_page.route_snapshot != trace_snapshot:
+                raise UpstreamContractMismatch("Evidence Traces route snapshot drift")
+            if trace_state is not None and trace_page.trace_state != trace_state:
+                raise UpstreamContractMismatch("Evidence Trace state drift")
+            trace_snapshot = trace_page.route_snapshot
+            trace_state = trace_page.trace_state
+            nodes.extend(trace_page.nodes)
+            trace_cursor = trace_page.next_cursor
+            if trace_cursor is None:
+                break
+
+        if fact_snapshot is None or trace_snapshot is None or trace_state is None:
+            raise UpstreamContractMismatch("Evidence observation traversal has no coordinate")
+        by_fact = {item.fact_id: item for item in facts}
+        by_node = {item.resource_id: item for item in nodes}
+        if len(by_fact) != len(facts) or len(by_node) != len(nodes):
+            raise UpstreamContractMismatch("Evidence observation identity is duplicated")
+        ordered_facts = tuple(by_fact[key] for key in sorted(by_fact, key=str.encode))
+        ordered_nodes = tuple(by_node[key] for key in sorted(by_node, key=str.encode))
+        bindings = (
+            EvidenceBinding(
+                route="/v1/evidence/facts",
+                canonical_filter={"delivery_id": delivery_id},
+                contract_revision="0.1.0",
+                observation_profile="1.0.0",
+                read_model_revision="1.0.0",
+                route_snapshot=fact_snapshot,
+                completion_state="COMPLETE",
+            ),
+            EvidenceBinding(
+                route="/v1/evidence/traces",
+                canonical_filter={"delivery_id": delivery_id},
+                contract_revision="0.1.0",
+                observation_profile="1.0.0",
+                read_model_revision="1.0.0",
+                route_snapshot=trace_snapshot,
+                completion_state="EXPIRED" if trace_state == "EXPIRED" else "COMPLETE",
+                error_state="TRACE_EXPIRED" if trace_state == "EXPIRED" else None,
+            ),
+        )
+        references = tuple(
+            sorted(
+                (
+                    *(
+                        InputReference(
+                            kind="FACT",
+                            identity=item.fact_id,
+                            provenance_ref=item.accepted_digest,
+                        )
+                        for item in ordered_facts
+                    ),
+                    *(
+                        InputReference(
+                            kind="TRACE_NODE",
+                            identity=item.resource_id,
+                            provenance_ref=item.source_identity,
+                        )
+                        for item in ordered_nodes
+                    ),
+                ),
+                key=lambda item: item.identity.encode(),
+            )
+        )
+        return ResolvedDeliveryObservation(
+            delivery_id=delivery_id,
+            facts=ordered_facts,
+            trace_nodes=ordered_nodes,
+            trace_state=trace_state,
+            evidence_bindings=bindings,
+            input_refs=references,
+        )
 
 
 def _normalized_utc(value: datetime) -> str:

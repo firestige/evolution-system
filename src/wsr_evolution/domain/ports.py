@@ -2,6 +2,64 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+type Scalar = str | int | float | bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class FactReading:
+    fact_id: str
+    kind: str
+    source_identity: str
+    recorded_at: datetime
+    accepted_digest: str
+    completeness: str | None
+    availability: str
+    expiry: str
+    fields: tuple[tuple[str, Scalar], ...]
+    compatibility: tuple[tuple[str, Scalar], ...]
+
+    @property
+    def field_map(self) -> dict[str, Scalar]:
+        return dict(self.fields)
+
+    @property
+    def compatibility_map(self) -> dict[str, Scalar]:
+        return dict(self.compatibility)
+
+
+@dataclass(frozen=True, slots=True)
+class FactPage:
+    facts: tuple[FactReading, ...]
+    next_cursor: str | None
+    route_snapshot: str
+
+
+@dataclass(frozen=True, slots=True)
+class TraceNodeReading:
+    resource_id: str
+    trace_id: str
+    span_id: str
+    source_identity: str
+    recorded_at: datetime
+    availability: str
+    expiry: str
+    start_time_unix_nano: int
+    end_time_unix_nano: int
+    span_status: str
+    fields: tuple[tuple[str, Scalar], ...]
+
+    @property
+    def field_map(self) -> dict[str, Scalar]:
+        return dict(self.fields)
+
+
+@dataclass(frozen=True, slots=True)
+class TracePage:
+    nodes: tuple[TraceNodeReading, ...]
+    next_cursor: str | None
+    route_snapshot: str
+    trace_state: str
+
 
 @dataclass(frozen=True, slots=True)
 class TaskSummary:
