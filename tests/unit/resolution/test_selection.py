@@ -5,14 +5,14 @@ from datetime import UTC, datetime
 import pytest
 
 from wsr_evolution.api.models import EvaluationSelection
-from wsr_evolution.application import UpstreamContractMismatch
+from wsr_evolution.application import ResolutionBoundExceeded, UpstreamContractMismatch
 from wsr_evolution.domain.ports import (
     DeliveryManifestReading,
     ManifestWorkflow,
     TaskMembershipPage,
     TaskMembershipSummary,
 )
-from wsr_evolution.resolution.service import SelectionPopulationResolver
+from wsr_evolution.resolution.service import ResolutionLimits, SelectionPopulationResolver
 from wsr_evolution.workflow_sources.resolution import WorkflowResolution
 
 AS_OF = datetime(2026, 8, 28, 1, tzinfo=UTC)
@@ -176,3 +176,27 @@ async def test_selection_resolver_fails_closed_on_cross_read_inconsistency(failu
         await SelectionPopulationResolver(evidence, WorkflowResolverStub()).resolve(
             EvaluationSelection(selection_version=1, task_ids=("task-a",)), as_of=AS_OF
         )
+
+
+@pytest.mark.asyncio
+async def test_selection_resolver_enforces_configured_unique_delivery_cap() -> None:
+    evidence = EvidenceStub(
+        [
+            TaskMembershipPage(
+                memberships=(
+                    membership("delivery-1", "1" * 64),
+                    membership("delivery-2", "2" * 64),
+                ),
+                as_of=AS_OF,
+                next_cursor=None,
+                route_snapshot="snapshot-a",
+            )
+        ]
+    )
+
+    with pytest.raises(ResolutionBoundExceeded, match="Delivery"):
+        await SelectionPopulationResolver(
+            evidence,
+            WorkflowResolverStub(),
+            limits=ResolutionLimits(max_deliveries_per_side=1),
+        ).resolve(EvaluationSelection(selection_version=1, task_ids=("task-a",)), as_of=AS_OF)
