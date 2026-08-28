@@ -35,6 +35,44 @@ class TaskMembershipPage:
     route_snapshot: str
 
 
+@dataclass(frozen=True, slots=True)
+class ManifestWorkflow:
+    package_name: str
+    exact_package_version: str
+    package_digest: str
+    workflow_id: str
+    workflow_version: str
+    snapshot_id: str
+    snapshot_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestRoleBinding:
+    role_id: str
+    role_prompt_identity: str
+    role_prompt_digest: str
+    agent_provider_id: str
+    model_provider_id: str
+    model_id: str
+    resolution_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryManifestReading:
+    delivery_id: str
+    task_id: str
+    manifest_digest: str
+    projection_digest: str
+    workflow: ManifestWorkflow
+    repository_document_state: str
+    repository_document_digest: str | None
+    resolved_map_digest: str
+    roles: tuple[ManifestRoleBinding, ...]
+    accepted_digest: str
+    profile_version: str
+    source_identity: str
+
+
 class EvidenceTaskReader(Protocol):
     async def list_tasks(self, *, limit: int, cursor: str | None) -> TaskPage: ...
 
@@ -46,3 +84,5 @@ class EvidenceTaskReader(Protocol):
         limit: int,
         cursor: str | None,
     ) -> TaskMembershipPage: ...
+
+    async def resolve_manifest(self, *, manifest_digest: str) -> DeliveryManifestReading: ...
