@@ -65,4 +65,3 @@ def test_token_directions_are_independent_and_missing_never_contributes_zero() -
     assert output_slice.value is not None and output_slice.value.value == 4
     assert output_slice.coverage.raw_ratio == "1/2"
     assert output_slice.missing_inputs == ("model_call.output_tokens:a/2",)
-

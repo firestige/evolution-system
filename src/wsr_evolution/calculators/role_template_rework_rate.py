@@ -50,9 +50,7 @@ def calculate(units: tuple[RoleTemplateTaskUnit, ...]) -> MetricResult:
             )
         )
     if not slices:
-        return unavailable(
-            "role-template-rework-rate", metric_coverage=coverage(0, len(units))
-        )
+        return unavailable("role-template-rework-rate", metric_coverage=coverage(0, len(units)))
     return MetricResult(
         metric_id="role-template-rework-rate",
         metric_version="2.0.0",

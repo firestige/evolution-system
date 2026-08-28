@@ -45,14 +45,13 @@ def node(resource_id: str) -> TraceNodeReading:
 
 
 class ReaderStub:
-    def __init__(self, *, drift: bool = False) -> None:
+    def __init__(self, *, drift: bool = False, trace_state: str = "AVAILABLE") -> None:
         self.drift = drift
+        self.trace_state = trace_state
         self.fact_calls: list[str | None] = []
         self.trace_calls: list[str | None] = []
 
-    async def resolve_facts(
-        self, *, delivery_id: str, limit: int, cursor: str | None
-    ) -> FactPage:
+    async def resolve_facts(self, *, delivery_id: str, limit: int, cursor: str | None) -> FactPage:
         assert delivery_id == "delivery-a"
         assert limit == 200
         self.fact_calls.append(cursor)
@@ -66,7 +65,7 @@ class ReaderStub:
         assert delivery_id == "delivery-a"
         assert limit == 200
         self.trace_calls.append(cursor)
-        return TracePage((node("node-a"),), None, "traces-a", "AVAILABLE")
+        return TracePage((node("node-a"),), None, "traces-a", self.trace_state)
 
 
 @pytest.mark.asyncio
@@ -88,6 +87,17 @@ async def test_observation_resolver_fully_traverses_and_binds_route_local_snapsh
 @pytest.mark.asyncio
 async def test_observation_resolver_rejects_route_snapshot_drift() -> None:
     with pytest.raises(UpstreamContractMismatch, match="snapshot"):
-        await DeliveryObservationResolver(ReaderStub(drift=True)).resolve(
-            delivery_id="delivery-a"
-        )
+        await DeliveryObservationResolver(ReaderStub(drift=True)).resolve(delivery_id="delivery-a")
+
+
+@pytest.mark.asyncio
+async def test_partial_trace_read_set_is_never_claimed_complete() -> None:
+    result = await DeliveryObservationResolver(ReaderStub(trace_state="PARTIAL")).resolve(
+        delivery_id="delivery-a"
+    )
+
+    trace_binding = next(
+        item for item in result.evidence_bindings if item.route == "/v1/evidence/traces"
+    )
+    assert trace_binding.completion_state == "PARTIAL"
+    assert trace_binding.error_state == "TRACE_PARTIAL"

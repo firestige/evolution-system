@@ -41,4 +41,3 @@ def test_eligibility_publishes_exact_ratio_at_minimum_sample() -> None:
     assert metric_slice.value is not None
     assert metric_slice.value.value == "19/20"
     assert metric_slice.coverage.raw_ratio == "1"
-

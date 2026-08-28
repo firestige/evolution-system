@@ -39,12 +39,14 @@ def coverage(
     state: str = "FULL",
     alert: str | None = None,
 ) -> Coverage:
-    return Coverage(
-        numerator=numerator,
-        denominator=denominator,
-        raw_ratio=raw_ratio,
-        state=state,
-        alert=alert,
+    return Coverage.model_validate(
+        {
+            "numerator": numerator,
+            "denominator": denominator,
+            "raw_ratio": raw_ratio,
+            "state": state,
+            "alert": alert,
+        }
     )
 
 
@@ -332,12 +334,14 @@ def test_coverage_shape_is_exactly_derived_from_integer_counts(
     state: str,
     alert: str | None,
 ) -> None:
-    result = Coverage(
-        numerator=numerator,
-        denominator=denominator,
-        raw_ratio=raw_ratio,
-        state=state,
-        alert=alert,
+    result = Coverage.model_validate(
+        {
+            "numerator": numerator,
+            "denominator": denominator,
+            "raw_ratio": raw_ratio,
+            "state": state,
+            "alert": alert,
+        }
     )
 
     assert result.raw_ratio == raw_ratio
