@@ -3,7 +3,7 @@
 [English](README.md) | 中文
 
 evolution-system 是 workflow-self-recursive 的无状态 Metric Result 服务。它把
-`EvaluationSelection` 解析到 Evidence，绑定精确的已发布 Evaluation Catalog，并返回
+`EvaluationSelection` 解析到 Evidence，绑定 owner 已批准的 Evaluation Catalog 2.0 评审候选，并返回
 `ResolvedEvaluationContext` receipt 与权威 Metric Results。compare 请求分别携带左右
 selection；两侧结果和所有兼容 delta 均由 Evolution 计算。
 
@@ -16,9 +16,15 @@ Iteration 5 明确不包含 Workflow 编辑、改进应用、AI 归因和 meta-r
 
 ## 开发者预览
 
-当前候选提供封闭、无副作用的 compute 边界，并为 14 项 published metric coordinate
-各提供一个隔离的 Python calculator slot。slot 尚未实现公式，也尚未遍历真实 Evidence
-服务。**正式发布前仍可能发生破坏兼容性的变更。**
+当前候选提供封闭、无副作用的 compute 边界、精确的 12-coordinate registry、12/12
+candidate metric 的 pure formula，以及 Task membership、Manifest projection、Facts 和
+recorded Trace nodes 的 typed reader/resolver。Delivery、operational、Task、Role/model、
+Role-template 与 exact reported-Usage calculator input 在关联缺失时 fail closed。
+
+端到端 compute orchestration，以及 Usage Event native Span identity 的物理 projection，仍是
+Wave5 未完成工作。该 exact call binding 尚未公开时，call-scoped Usage availability/cost
+只产生 missing coverage；绝不按 Delivery identity、timestamp、arrival order 或文本关联。
+2.0 Catalog 仍是 review candidate，**正式发布前仍可能发生破坏兼容性的变更。**
 
 ## 开发
 
@@ -52,7 +58,7 @@ git clone https://github.com/firestige/evolution-system.git
 ## 文档
 
 - [Evolution System 设计](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/evolution/evolution-system.zh-CN.md)
-- [Metric Catalog](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evaluation/metric-catalog.zh-CN.md)
+- [Metric Catalog 2.0 评审候选](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evaluation/metric-catalog-2-candidate.zh-CN.md)
 - [Evidence Query Contract](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evidence-query/evidence-query.zh-CN.md)
 
 ## License
