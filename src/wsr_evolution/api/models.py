@@ -186,6 +186,12 @@ class TaskMembershipReference(ClosedModel):
     source_identity: str = Field(min_length=1, max_length=512)
     recorded_at: datetime
 
+    @model_validator(mode="after")
+    def validate_recorded_at(self) -> Self:
+        if self.recorded_at.tzinfo is None:
+            raise ValueError("Task membership recorded_at must include an offset")
+        return self
+
 
 class TaskPopulationEntry(ClosedModel):
     task_id: TaskId
@@ -207,6 +213,8 @@ class TaskPopulationEntry(ClosedModel):
         )
         object.__setattr__(self, "cohort_coordinates", _sorted_mapping(self.cohort_coordinates))
         object.__setattr__(self, "exclusions", tuple(sorted(self.exclusions)))
+        if not self.memberships and "UNDEFINED_TASK_MEMBERSHIP" not in self.exclusions:
+            raise ValueError("a Task without membership requires UNDEFINED_TASK_MEMBERSHIP")
         return self
 
 
@@ -290,6 +298,19 @@ class ResolvedEvaluationContext(ClosedModel):
             raise ValueError("task_population must be duplicate-free")
         if {item.task_id for item in population} != set(self.selection.task_ids):
             raise ValueError("task_population must resolve every selected Task exactly once")
+        task_binding_ids = {
+            item.canonical_filter.get("task_id")
+            for item in bindings
+            if item.route == "/v1/evidence/tasks"
+        }
+        if not set(self.selection.task_ids) <= task_binding_ids:
+            raise ValueError("every selected Task requires an exact Task traversal binding")
+        if any(
+            membership.recorded_at > self.as_of
+            for task in population
+            for membership in task.memberships
+        ):
+            raise ValueError("Task membership cannot be recorded after receipt as_of")
         if len(set(binding_keys)) != len(binding_keys):
             raise ValueError("evidence_bindings must be duplicate-free")
         if len(set(reference_keys)) != len(reference_keys):
@@ -424,6 +445,8 @@ class CompareResponse(ClosedModel):
                     and after is not None
                     and before.value is not None
                     and after.value is not None
+                    and before.state == "AVAILABLE"
+                    and after.state == "AVAILABLE"
                     and before.value.kind == after.value.kind
                     and before.value.unit == after.value.unit
                     and before.compatibility == after.compatibility
