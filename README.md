@@ -26,11 +26,18 @@ orchestration. Every successful side returns the exact 12 Metric Results and a
 receipt-bound resolved read set; metric-level holes do not fail the other results.
 
 The current public Fact projection still does not expose a Usage Event's native
-Span identity or a recorded repair-to-Role attribution. Those call-/Role-scoped
-inputs therefore produce explicit missing coverage; they are never joined by
-Delivery identity, timestamp, arrival order, or text. The 2.0 Catalog remains a
-review candidate, so **compatibility-breaking changes remain possible before
-publication.**
+Span identity, so call-scoped Usage inputs produce explicit missing coverage and
+are never joined by Delivery identity, timestamp, arrival order, or text.
+Role-template rework is instead a descriptive Delivery/template exposure: the
+accepted Manifest plus recorded C30 selects the exact template, while a valid
+same-Delivery `FINDING_FIX` relationship marks rework. It does not attribute
+causality to the template, reviewer, or writer.
+
+Resolution safety limits are configurable. Defaults are 500 unique Deliveries
+per side, 20 pages per traversal, 100,000 Fact-plus-Trace records per side, and a
+120-second side deadline. Exceeding a bound fails the side explicitly; no result
+is silently truncated. The 2.0 Catalog remains a review candidate, so
+**compatibility-breaking changes remain possible before publication.**
 
 ## Development
 
