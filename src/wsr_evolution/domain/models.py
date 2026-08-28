@@ -101,3 +101,39 @@ class ReportedUsageUnit:
     @property
     def compatibility(self) -> tuple[str, str, str, str]:
         return (self.kind, self.unit, self.source, self.source_id)
+
+
+@dataclass(frozen=True, slots=True)
+class RoleTemplateTaskUnit:
+    task_id: str
+    role_id: str
+    role_prompt_identity: str
+    role_prompt_digest: str
+    repair_observed: bool | None
+    provenance_refs: tuple[str, ...]
+
+    @property
+    def template(self) -> tuple[str, str, str]:
+        return (self.role_id, self.role_prompt_identity, self.role_prompt_digest)
+
+
+@dataclass(frozen=True, slots=True)
+class RoleTemplateUsageUnit:
+    task_id: str
+    role_id: str
+    role_prompt_identity: str
+    role_prompt_digest: str
+    kind: str
+    unit: str
+    source: str
+    source_id: str
+    value: int
+    provenance_refs: tuple[str, ...]
+
+    @property
+    def template(self) -> tuple[str, str, str]:
+        return (self.role_id, self.role_prompt_identity, self.role_prompt_digest)
+
+    @property
+    def compatibility(self) -> tuple[str, str, str, str]:
+        return (self.kind, self.unit, self.source, self.source_id)

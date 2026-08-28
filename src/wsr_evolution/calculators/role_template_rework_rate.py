@@ -1,3 +1,60 @@
+from wsr_evolution.api.models import MetricResult, MetricSlice
+from wsr_evolution.domain.models import RoleTemplateTaskUnit
+
+from .common import coverage, ratio_value, unavailable
 from .protocol import CalculatorSlot
 
 SLOT = CalculatorSlot("role-template-rework-rate@2.0.0", __name__)
+
+
+def calculate(units: tuple[RoleTemplateTaskUnit, ...]) -> MetricResult:
+    identities = {(unit.task_id, unit.template) for unit in units}
+    if len(identities) != len(units):
+        raise ValueError("duplicate Task/template input")
+    slices = []
+    for template in sorted({unit.template for unit in units}):
+        candidates = tuple(unit for unit in units if unit.template == template)
+        covered = tuple(unit for unit in candidates if unit.repair_observed is not None)
+        if len(covered) < 20:
+            continue
+        repaired = sum(unit.repair_observed is True for unit in covered)
+        role_id, identity, digest = template
+        slices.append(
+            MetricSlice(
+                slice_key={
+                    "role": role_id,
+                    "role_prompt_identity": identity,
+                    "role_prompt_digest": digest,
+                },
+                state="AVAILABLE",
+                value=ratio_value(repaired, len(covered)),
+                numerator=repaired,
+                denominator=len(covered),
+                coverage=coverage(len(covered), len(candidates)),
+                compatibility={
+                    "role": role_id,
+                    "role_prompt_identity": identity,
+                    "role_prompt_digest": digest,
+                },
+                missing_inputs=tuple(
+                    sorted(
+                        f"repair_attribution:{unit.task_id}"
+                        for unit in candidates
+                        if unit.repair_observed is None
+                    )
+                ),
+                provenance_refs=tuple(
+                    sorted({ref for unit in covered for ref in unit.provenance_refs})
+                ),
+                reading="descriptive association; no template causality",
+            )
+        )
+    if not slices:
+        return unavailable(
+            "role-template-rework-rate", metric_coverage=coverage(0, len(units))
+        )
+    return MetricResult(
+        metric_id="role-template-rework-rate",
+        metric_version="2.0.0",
+        slices=tuple(slices),
+    )
