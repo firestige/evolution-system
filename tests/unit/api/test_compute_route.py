@@ -69,9 +69,9 @@ def fixed_response() -> SingleResponse:
                     coverage=Coverage(
                         numerator=0,
                         denominator=0,
-                        raw_ratio="0",
+                        raw_ratio=None,
                         state="NO_POPULATION",
-                        alert=True,
+                        alert=None,
                     ),
                 ),
             ),
