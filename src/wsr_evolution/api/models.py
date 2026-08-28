@@ -12,6 +12,8 @@ from pydantic import (
     model_validator,
 )
 
+from wsr_evolution.catalog import CATALOG_COORDINATES
+
 
 TaskId = Annotated[
     str,
@@ -249,3 +251,87 @@ class ResolvedEvaluationContext(ClosedModel):
         object.__setattr__(self, "evidence_bindings", bindings)
         object.__setattr__(self, "input_refs", references)
         return self
+
+
+class SideResult(ClosedModel):
+    tag: Literal["SIDE_RESULT"]
+    receipt: ResolvedEvaluationContext
+    metric_results: tuple[MetricResult, ...]
+
+    @model_validator(mode="after")
+    def validate_catalog_completeness(self) -> Self:
+        by_coordinate = {
+            f"{result.metric_id}@{result.metric_version}": result
+            for result in self.metric_results
+        }
+        if len(by_coordinate) != len(self.metric_results):
+            raise ValueError("metric result coordinates must be unique")
+        if set(by_coordinate) != set(CATALOG_COORDINATES):
+            raise ValueError("successful side must contain the exact fourteen catalog coordinates")
+        object.__setattr__(
+            self,
+            "metric_results",
+            tuple(by_coordinate[coordinate] for coordinate in CATALOG_COORDINATES),
+        )
+        return self
+
+
+class SideError(ClosedModel):
+    tag: Literal["SIDE_ERROR"]
+    code: str = Field(min_length=1, max_length=128)
+    retryable: StrictBool
+    detail: str = Field(min_length=1, max_length=2048)
+
+
+class DeltaEntry(ClosedModel):
+    metric_coordinate: str
+    state: Literal["AVAILABLE", "WITHHELD", "SIDE_UNRESOLVED"]
+    value: ExactValue | None = None
+    withholding_reason: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_delta(self) -> Self:
+        if self.metric_coordinate not in CATALOG_COORDINATES:
+            raise ValueError("Delta coordinate is not in the bound Evaluation Catalog")
+        if self.state == "AVAILABLE":
+            if self.value is None or self.withholding_reason is not None:
+                raise ValueError("available Delta requires value without withholding")
+        elif self.value is not None:
+            raise ValueError("withheld Delta cannot contain a value")
+        return self
+
+
+SideOutcome = Annotated[SideResult | SideError, Field(discriminator="tag")]
+
+
+class SingleResponse(ClosedModel):
+    api_version: Literal[1]
+    mode: Literal["SINGLE"]
+    result: SideResult
+
+
+class CompareResponse(ClosedModel):
+    api_version: Literal[1]
+    mode: Literal["COMPARE"]
+    status: Literal["FULL_COMPARE", "PARTIAL_COMPARE"]
+    left: SideOutcome
+    right: SideOutcome
+    deltas: tuple[DeltaEntry, ...]
+
+    @model_validator(mode="after")
+    def validate_compare_shape(self) -> Self:
+        by_coordinate = {entry.metric_coordinate: entry for entry in self.deltas}
+        if len(by_coordinate) != len(self.deltas) or set(by_coordinate) != set(CATALOG_COORDINATES):
+            raise ValueError("compare must contain one Delta entry per catalog coordinate")
+        ordered = tuple(by_coordinate[coordinate] for coordinate in CATALOG_COORDINATES)
+        results = sum(item.tag == "SIDE_RESULT" for item in (self.left, self.right))
+        if self.status == "PARTIAL_COMPARE":
+            if results != 1 or any(entry.state != "SIDE_UNRESOLVED" for entry in ordered):
+                raise ValueError("partial compare requires one side result and unresolved Deltas")
+        elif results != 2 or any(entry.state == "SIDE_UNRESOLVED" for entry in ordered):
+            raise ValueError("full compare requires two side results and resolved Delta disposition")
+        object.__setattr__(self, "deltas", ordered)
+        return self
+
+
+ComputeResponse = SingleResponse | CompareResponse
