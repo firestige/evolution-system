@@ -1,17 +1,23 @@
 import json
 from datetime import UTC, datetime
 from fractions import Fraction
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
+    PlainSerializer,
+    SerializerFunctionWrapHandler,
     StrictBool,
     StrictInt,
     StringConstraints,
+    model_serializer,
     model_validator,
 )
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from wsr_evolution.catalog import CATALOG_COORDINATES
 
@@ -68,6 +74,17 @@ CanonicalRational = Annotated[
         pattern=r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*|(?:[1-9][0-9]*|-[1-9][0-9]*)/[1-9][0-9]*)$"
     ),
 ]
+ExactInteger = Annotated[
+    StrictInt,
+    PlainSerializer(lambda value: str(value), return_type=str, when_used="json"),
+]
+NonnegativeExactInteger = Annotated[
+    StrictInt,
+    Field(ge=0),
+    PlainSerializer(lambda value: str(value), return_type=str, when_used="json"),
+]
+CoverageState = Literal["NO_POPULATION", "NO_COVERAGE", "PARTIAL", "FULL"]
+CoverageAlert = Literal["LOW_COVERAGE"]
 Digest = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 PrefixedDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[a-f0-9]{64}$")]
 TruthState = Literal[
@@ -111,11 +128,52 @@ def _parse_canonical_rational(value: str) -> Fraction:
 
 
 class Coverage(ClosedModel):
-    numerator: StrictInt = Field(ge=0)
-    denominator: StrictInt = Field(ge=0)
+    numerator: NonnegativeExactInteger
+    denominator: NonnegativeExactInteger
     raw_ratio: CanonicalRational | None
-    state: Literal["NO_POPULATION", "NO_COVERAGE", "PARTIAL", "FULL"]
-    alert: Literal["LOW_COVERAGE"] | None
+    state: CoverageState
+    alert: CoverageAlert | None
+
+    @model_serializer(mode="wrap")
+    def serialize_with_explicit_nulls(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        payload = cast(dict[str, object], handler(self))
+        payload["raw_ratio"] = self.raw_ratio
+        payload["alert"] = self.alert
+        return payload
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        if handler.mode != "serialization":
+            return handler(core_schema)
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "numerator": {"type": "string", "pattern": r"^(?:0|[1-9][0-9]*)$"},
+                "denominator": {"type": "string", "pattern": r"^(?:0|[1-9][0-9]*)$"},
+                "raw_ratio": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "null"},
+                    ]
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["NO_POPULATION", "NO_COVERAGE", "PARTIAL", "FULL"],
+                },
+                "alert": {
+                    "anyOf": [
+                        {"type": "string", "const": "LOW_COVERAGE"},
+                        {"type": "null"},
+                    ]
+                },
+            },
+            "required": ["numerator", "denominator", "raw_ratio", "state", "alert"],
+        }
 
     @model_validator(mode="after")
     def validate_counts(self) -> Self:
@@ -147,7 +205,7 @@ class Coverage(ClosedModel):
 
 class ExactValue(ClosedModel):
     kind: Literal["COUNT", "QUANTITY", "RATIO", "MONEY", "DURATION_MS", "BOOLEAN"]
-    value: StrictInt | StrictBool | CanonicalDecimal | CanonicalRational
+    value: ExactInteger | StrictBool | CanonicalDecimal | CanonicalRational
     unit: str = Field(min_length=1, max_length=64)
     precision: StrictInt | None = Field(default=None, ge=0, le=18)
     rounding: Literal["ROUND_HALF_EVEN", "ROUND_HALF_UP"] | None = None
@@ -169,6 +227,8 @@ class ExactValue(ClosedModel):
         elif self.kind == "BOOLEAN":
             if not isinstance(self.value, bool):
                 raise ValueError("boolean values require a strict boolean")
+            if self.precision is not None or self.rounding is not None:
+                raise ValueError("boolean values do not declare decimal precision or rounding")
         elif isinstance(self.value, bool) or not isinstance(self.value, int):
             raise ValueError("count, quantity, money and duration values require exact integers")
         elif self.precision is not None or self.rounding is not None:
@@ -181,10 +241,10 @@ class MetricSlice(ClosedModel):
     state: TruthState
     value: ExactValue | None = None
     withholding_reason: WithholdingReason | None = None
-    measures: dict[str, StrictInt | CanonicalDecimal] = Field(default_factory=dict)
-    numerator: StrictInt | None = Field(default=None, ge=0)
-    denominator: StrictInt | None = Field(default=None, ge=0)
-    contributing_count: StrictInt | None = Field(default=None, ge=0)
+    measures: dict[str, ExactInteger | CanonicalDecimal] = Field(default_factory=dict)
+    numerator: NonnegativeExactInteger | None = None
+    denominator: NonnegativeExactInteger | None = None
+    contributing_count: NonnegativeExactInteger | None = None
     coverage: Coverage
     compatibility: dict[str, str] = Field(default_factory=dict)
     exclusions: tuple[str, ...] = ()

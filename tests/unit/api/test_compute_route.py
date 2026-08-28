@@ -136,6 +136,14 @@ async def test_compute_returns_exact_response_without_creating_resource() -> Non
     assert first.status_code == 200
     assert first.json() == second.json()
     assert len(first.json()["result"]["metric_results"]) == 12
+    coverage = first.json()["result"]["metric_results"][0]["slices"][0]["coverage"]
+    assert coverage == {
+        "numerator": "0",
+        "denominator": "0",
+        "raw_ratio": None,
+        "state": "NO_POPULATION",
+        "alert": None,
+    }
     assert "location" not in first.headers
 
 
