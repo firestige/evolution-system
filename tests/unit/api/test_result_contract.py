@@ -21,6 +21,8 @@ from wsr_evolution.api.models import (
     SingleResponse,
     TaskMembershipReference,
     TaskPopulationEntry,
+    WorkflowResolutionAttempt,
+    WorkflowResolutionEntry,
 )
 from wsr_evolution.catalog import CATALOG_COORDINATES
 
@@ -32,6 +34,27 @@ def coverage(*, numerator: int = 1, denominator: int = 1, raw_ratio: str = "1") 
         raw_ratio=raw_ratio,
         state="FULL",
         alert=False,
+    )
+
+
+def workflow_resolution(manifest_digest: str) -> WorkflowResolutionEntry:
+    return WorkflowResolutionEntry(
+        manifest_digest=manifest_digest,
+        manifest_projection_digest="4" * 64,
+        accepted_digest="5" * 64,
+        profile_version="2.0.0",
+        source_identity=f"event:manifest-{manifest_digest[:8]}",
+        package_name="implementation",
+        exact_package_version="2.0.0",
+        package_digest=f"sha256:{'6' * 64}",
+        workflow_id="workflow.implementation",
+        workflow_version="2.0.0",
+        snapshot_id="snapshot.implementation.2",
+        snapshot_digest=f"sha256:{'7' * 64}",
+        state="NOT_FOUND",
+        attempts=(
+            WorkflowResolutionAttempt(source_id="official", source_index=0, code="NOT_FOUND"),
+        ),
     )
 
 
@@ -135,6 +158,9 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
             ),
             InputReference(kind="FACT", identity="fact-a", provenance_ref="accepted-a"),
         ),
+        workflow_resolutions=tuple(
+            workflow_resolution(digest) for digest in ("3" * 64, "1" * 64, "2" * 64)
+        ),
         population_state="PARTIAL",
     )
 
@@ -155,6 +181,11 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
     assert [reference["identity"] for reference in payload["input_refs"]] == [
         "fact-a",
         "trace-z/span-z",
+    ]
+    assert [item["manifest_digest"] for item in payload["workflow_resolutions"]] == [
+        "1" * 64,
+        "2" * 64,
+        "3" * 64,
     ]
     assert payload["as_of"] != payload["resolved_at"]
     assert "global_snapshot" not in payload
@@ -335,6 +366,37 @@ def test_task_population_accepts_the_observation_display_name_bound() -> None:
             display_name="n" * 161,
             memberships=(),
             exclusions=("UNDEFINED_TASK_MEMBERSHIP",),
+        )
+
+
+def test_workflow_resolution_receipt_is_closed_and_bound_to_membership_manifests() -> None:
+    available = workflow_resolution("a" * 64).model_copy(
+        update={
+            "state": "AVAILABLE",
+            "matched_source_id": "official",
+            "matched_source_index": 0,
+            "matched_repository": "firestige/workflows",
+            "validated_archive_digest": f"sha256:{'8' * 64}",
+            "validated_package_digest": f"sha256:{'6' * 64}",
+            "validated_snapshot_digest": f"sha256:{'7' * 64}",
+        }
+    )
+    assert WorkflowResolutionEntry.model_validate(available.model_dump()).state == "AVAILABLE"
+
+    with pytest.raises(ValidationError):
+        WorkflowResolutionEntry.model_validate(
+            {**available.model_dump(), "validated_snapshot_digest": f"sha256:{'9' * 64}"}
+        )
+    with pytest.raises(ValidationError):
+        WorkflowResolutionAttempt(code="ATTEMPTS_TRUNCATED", omitted_count=1)
+
+    context = minimal_context("task-a")
+    with pytest.raises(ValidationError, match="membership Manifest"):
+        ResolvedEvaluationContext(
+            **{
+                **context.model_dump(),
+                "workflow_resolutions": (workflow_resolution("a" * 64),),
+            }
         )
 
 
