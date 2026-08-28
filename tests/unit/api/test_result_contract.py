@@ -27,13 +27,20 @@ from wsr_evolution.api.models import (
 from wsr_evolution.catalog import CATALOG_COORDINATES
 
 
-def coverage(*, numerator: int = 1, denominator: int = 1, raw_ratio: str = "1") -> Coverage:
+def coverage(
+    *,
+    numerator: int = 1,
+    denominator: int = 1,
+    raw_ratio: str | None = "1",
+    state: str = "FULL",
+    alert: str | None = None,
+) -> Coverage:
     return Coverage(
         numerator=numerator,
         denominator=denominator,
         raw_ratio=raw_ratio,
-        state="FULL",
-        alert=False,
+        state=state,
+        alert=alert,
     )
 
 
@@ -234,7 +241,12 @@ def test_explicit_zero_and_sample_withholding_are_distinct() -> None:
         slice_key={},
         state="UNAVAILABLE",
         withholding_reason="SAMPLE_INSUFFICIENT",
-        coverage=coverage(numerator=9, denominator=20, raw_ratio="0.45"),
+        coverage=coverage(
+            numerator=9,
+            denominator=20,
+            raw_ratio="9/20",
+            state="PARTIAL",
+        ),
     )
 
     assert available.model_dump(mode="json", exclude_none=True)["value"]["value"] == 0
@@ -242,18 +254,91 @@ def test_explicit_zero_and_sample_withholding_are_distinct() -> None:
     assert insufficient.coverage.numerator == 9
 
 
-@pytest.mark.parametrize("value", [0.1, "1e3", "01", "-0", "NaN", "Infinity"])
-def test_authoritative_decimal_rejects_float_or_noncanonical_string(value: object) -> None:
+@pytest.mark.parametrize("value", [0.1, "1e3", "01", "-0", "2/4", "1/-3", "NaN", "Infinity"])
+def test_authoritative_ratio_rejects_float_or_noncanonical_string(value: object) -> None:
     with pytest.raises(ValidationError):
         ExactValue.model_validate(
             {
                 "kind": "RATIO",
                 "value": value,
                 "unit": "ratio",
-                "precision": 2,
-                "rounding": "ROUND_HALF_EVEN",
             }
         )
+
+
+def test_authoritative_ratio_uses_exact_reduced_rational_without_display_precision() -> None:
+    value = ExactValue(kind="RATIO", value="1/3", unit="ratio")
+
+    assert value.model_dump(mode="json", exclude_none=True) == {
+        "kind": "RATIO",
+        "value": "1/3",
+        "unit": "ratio",
+    }
+
+    with pytest.raises(ValidationError):
+        ExactValue(
+            kind="RATIO",
+            value="1/3",
+            unit="ratio",
+            precision=2,
+            rounding="ROUND_HALF_EVEN",
+        )
+
+
+@pytest.mark.parametrize(
+    ("numerator", "denominator", "raw_ratio", "state", "alert"),
+    [
+        (0, 0, None, "NO_POPULATION", None),
+        (0, 10, "0", "NO_COVERAGE", "LOW_COVERAGE"),
+        (1, 20, "1/20", "PARTIAL", "LOW_COVERAGE"),
+        (1, 10, "1/10", "PARTIAL", None),
+        (1, 3, "1/3", "PARTIAL", None),
+        (3, 3, "1", "FULL", None),
+    ],
+)
+def test_coverage_shape_is_exactly_derived_from_integer_counts(
+    numerator: int,
+    denominator: int,
+    raw_ratio: str | None,
+    state: str,
+    alert: str | None,
+) -> None:
+    result = Coverage(
+        numerator=numerator,
+        denominator=denominator,
+        raw_ratio=raw_ratio,
+        state=state,
+        alert=alert,
+    )
+
+    assert result.raw_ratio == raw_ratio
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "numerator": 0,
+            "denominator": 0,
+            "raw_ratio": "0",
+            "state": "NO_POPULATION",
+            "alert": None,
+        },
+        {"numerator": 1, "denominator": 3, "raw_ratio": "0.33", "state": "PARTIAL", "alert": None},
+        {"numerator": 1, "denominator": 3, "raw_ratio": "1/3", "state": "FULL", "alert": None},
+        {"numerator": 1, "denominator": 20, "raw_ratio": "1/20", "state": "PARTIAL", "alert": None},
+        {
+            "numerator": 1,
+            "denominator": 10,
+            "raw_ratio": "1/10",
+            "state": "PARTIAL",
+            "alert": "LOW_COVERAGE",
+        },
+    ],
+)
+def test_coverage_rejects_inconsistent_derived_fields(payload: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        Coverage.model_validate(payload)
 
 
 def test_metric_result_rejects_duplicate_or_noncanonical_slice_keys() -> None:
@@ -475,6 +560,15 @@ def test_delta_direction_and_withholding_are_closed() -> None:
             direction="DECREASE",
         )
 
+    rational_delta = DeltaEntry(
+        metric_coordinate=CATALOG_COORDINATES[0],
+        slice_key={},
+        state="AVAILABLE",
+        value=ExactValue(kind="RATIO", value="-1/3", unit="ratio"),
+        direction="DECREASE",
+    )
+    assert rational_delta.direction == "DECREASE"
+
 
 def test_receipt_rejects_membership_after_as_of_or_without_offset() -> None:
     with pytest.raises(ValidationError):
@@ -520,9 +614,9 @@ def unavailable_result(coordinate: str) -> MetricResult:
                 coverage=Coverage(
                     numerator=0,
                     denominator=0,
-                    raw_ratio="0",
+                    raw_ratio=None,
                     state="NO_POPULATION",
-                    alert=True,
+                    alert=None,
                 ),
             ),
         ),

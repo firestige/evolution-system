@@ -1,6 +1,6 @@
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
+from fractions import Fraction
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -62,6 +62,12 @@ CanonicalDecimal = Annotated[
     str,
     StringConstraints(pattern=r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*)(?:\.[0-9]+)?$"),
 ]
+CanonicalRational = Annotated[
+    str,
+    StringConstraints(
+        pattern=r"^(?:0|[1-9][0-9]*|-[1-9][0-9]*|(?:[1-9][0-9]*|-[1-9][0-9]*)/[1-9][0-9]*)$"
+    ),
+]
 Digest = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 PrefixedDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[a-f0-9]{64}$")]
 TruthState = Literal[
@@ -91,23 +97,57 @@ def _normalized_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _canonical_rational(value: Fraction) -> str:
+    if value.denominator == 1:
+        return str(value.numerator)
+    return f"{value.numerator}/{value.denominator}"
+
+
+def _parse_canonical_rational(value: str) -> Fraction:
+    parsed = Fraction(value)
+    if _canonical_rational(parsed) != value:
+        raise ValueError("ratio must be a reduced canonical rational")
+    return parsed
+
+
 class Coverage(ClosedModel):
     numerator: StrictInt = Field(ge=0)
     denominator: StrictInt = Field(ge=0)
-    raw_ratio: CanonicalDecimal
+    raw_ratio: CanonicalRational | None
     state: Literal["NO_POPULATION", "NO_COVERAGE", "PARTIAL", "FULL"]
-    alert: StrictBool
+    alert: Literal["LOW_COVERAGE"] | None
 
     @model_validator(mode="after")
     def validate_counts(self) -> Self:
         if self.numerator > self.denominator:
             raise ValueError("coverage numerator cannot exceed denominator")
+        if self.denominator == 0:
+            expected_ratio = None
+            expected_state = "NO_POPULATION"
+            expected_alert = None
+        else:
+            expected_ratio = _canonical_rational(Fraction(self.numerator, self.denominator))
+            if self.numerator == 0:
+                expected_state = "NO_COVERAGE"
+            elif self.numerator == self.denominator:
+                expected_state = "FULL"
+            else:
+                expected_state = "PARTIAL"
+            expected_alert = (
+                "LOW_COVERAGE" if 100 * self.numerator < 10 * self.denominator else None
+            )
+        if self.raw_ratio != expected_ratio:
+            raise ValueError("coverage raw_ratio must equal the exact integer-count ratio")
+        if self.state != expected_state:
+            raise ValueError("coverage state must match numerator and denominator")
+        if self.alert != expected_alert:
+            raise ValueError("coverage alert must follow the exact default threshold rule")
         return self
 
 
 class ExactValue(ClosedModel):
     kind: Literal["COUNT", "RATIO", "MONEY", "DURATION_MS", "BOOLEAN"]
-    value: StrictInt | StrictBool | CanonicalDecimal
+    value: StrictInt | StrictBool | CanonicalDecimal | CanonicalRational
     unit: str = Field(min_length=1, max_length=64)
     precision: StrictInt | None = Field(default=None, ge=0, le=18)
     rounding: Literal["ROUND_HALF_EVEN", "ROUND_HALF_UP"] | None = None
@@ -115,8 +155,13 @@ class ExactValue(ClosedModel):
     @model_validator(mode="after")
     def validate_representation(self) -> Self:
         if self.kind == "RATIO":
-            if not isinstance(self.value, str) or self.precision is None or self.rounding is None:
-                raise ValueError("ratio values require canonical decimal, precision and rounding")
+            if not isinstance(self.value, str):
+                raise ValueError("ratio values require a canonical exact rational")
+            _parse_canonical_rational(self.value)
+            if self.precision is not None or self.rounding is not None:
+                raise ValueError(
+                    "exact rational values do not declare display precision or rounding"
+                )
         elif self.kind == "BOOLEAN":
             if not isinstance(self.value, bool):
                 raise ValueError("boolean values require a strict boolean")
@@ -474,9 +519,9 @@ class DeltaEntry(ClosedModel):
             if self.value.kind == "BOOLEAN":
                 raise ValueError("boolean values do not have an arithmetic Delta")
             numeric = (
-                Decimal(self.value.value)
+                _parse_canonical_rational(self.value.value)
                 if isinstance(self.value.value, str)
-                else Decimal(self.value.value)
+                else Fraction(self.value.value)
             )
             expected = "INCREASE" if numeric > 0 else "DECREASE" if numeric < 0 else "NO_CHANGE"
             if self.direction != expected:
