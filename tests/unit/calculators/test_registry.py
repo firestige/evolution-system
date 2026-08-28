@@ -34,6 +34,7 @@ def test_every_coordinate_has_one_importable_module_slot() -> None:
         modules.append(slot.module)
         assert slot == module.SLOT
         assert slot.coordinate == coordinate
+        assert callable(module.calculate)
 
     assert len(set(modules)) == 12
 
