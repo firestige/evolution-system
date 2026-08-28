@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
@@ -84,6 +84,10 @@ WithholdingReason = Literal[
 
 def _sorted_mapping(value: dict[str, str]) -> dict[str, str]:
     return dict(sorted(value.items(), key=lambda item: item[0].encode("utf-8")))
+
+
+def _normalized_utc(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 class Coverage(ClosedModel):
@@ -298,13 +302,24 @@ class ResolvedEvaluationContext(ClosedModel):
             raise ValueError("task_population must be duplicate-free")
         if {item.task_id for item in population} != set(self.selection.task_ids):
             raise ValueError("task_population must resolve every selected Task exactly once")
-        task_binding_ids = {
-            item.canonical_filter.get("task_id")
-            for item in bindings
-            if item.route == "/v1/evidence/tasks"
-        }
-        if not set(self.selection.task_ids) <= task_binding_ids:
-            raise ValueError("every selected Task requires an exact Task traversal binding")
+        task_bindings = [item for item in bindings if item.route == "/v1/evidence/tasks"]
+        expected_as_of = _normalized_utc(self.as_of)
+        if len(task_bindings) != len(self.selection.task_ids) or any(
+            set(item.canonical_filter) != {"task_id", "as_of"}
+            or item.canonical_filter["task_id"] not in self.selection.task_ids
+            or item.canonical_filter["as_of"] != expected_as_of
+            for item in task_bindings
+        ):
+            raise ValueError("every selected Task requires one exact cutoff-bound traversal")
+        if {item.canonical_filter["task_id"] for item in task_bindings} != set(
+            self.selection.task_ids
+        ):
+            raise ValueError("Task traversal bindings must resolve selected Tasks exactly once")
+        if self.population_state == "COMPLETE" and (
+            any(item.completion_state != "COMPLETE" for item in task_bindings)
+            or any(not item.memberships for item in population)
+        ):
+            raise ValueError("complete population requires complete Task membership traversals")
         if any(
             membership.recorded_at > self.as_of
             for task in population
