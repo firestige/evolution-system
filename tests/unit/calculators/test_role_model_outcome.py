@@ -36,4 +36,3 @@ def test_duplicate_task_in_same_cohort_fails_closed() -> None:
         assert "duplicate Task/cohort" in str(error)
     else:
         raise AssertionError("duplicate Task/cohort unexpectedly accepted")
-

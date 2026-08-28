@@ -52,9 +52,7 @@ def calculate(units: tuple[OperationalCallUnit, ...]) -> MetricResult:
                 )
             )
     if not slices:
-        return unavailable(
-            "operational-token-usage", metric_coverage=coverage(0, len(units))
-        )
+        return unavailable("operational-token-usage", metric_coverage=coverage(0, len(units)))
     return MetricResult(
         metric_id="operational-token-usage", metric_version="2.0.0", slices=tuple(slices)
     )

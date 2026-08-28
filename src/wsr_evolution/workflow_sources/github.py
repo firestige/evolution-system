@@ -122,6 +122,7 @@ def _descriptor(
     package = _object(root["package"], {"name", "version", "digest"})
     archive = _object(root["archive"], {"name", "sha256", "bytes"})
     checksum = _object(root["checksum"], {"name"})
+
     def digest_pattern(item: object) -> bool:
         return (
             isinstance(item, str)
@@ -129,6 +130,7 @@ def _descriptor(
             and item.startswith("sha256:")
             and all(character in "0123456789abcdef" for character in item[7:])
         )
+
     valid = (
         root["schemaVersion"] == "workflow-package.package-release@1.0.0"
         and root["tag"] == f"workflow-package/{package_name}/v{exact_version}"

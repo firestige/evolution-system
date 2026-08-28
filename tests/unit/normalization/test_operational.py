@@ -62,3 +62,23 @@ def test_invalid_or_expired_measurements_remain_missing_not_zero() -> None:
     assert calls[0].input_tokens is None
     assert calls[0].output_tokens is None
 
+
+def test_expired_trace_node_cannot_leak_token_measurements() -> None:
+    trace = node(
+        f"{'a' * 32}/{'b' * 16}",
+        (
+            ("gen_ai.provider.name", "openai"),
+            ("C57", "gpt-5"),
+            ("C30", "writer"),
+            ("C06", "dsh"),
+            ("gen_ai.usage.input_tokens", 11),
+            ("gen_ai.usage.output_tokens", 7),
+        ),
+    )
+    object.__setattr__(trace, "expiry", "EXPIRED")
+
+    call = normalize_model_calls((trace,))[0]
+
+    assert call.duration_ns is None
+    assert call.input_tokens is None
+    assert call.output_tokens is None

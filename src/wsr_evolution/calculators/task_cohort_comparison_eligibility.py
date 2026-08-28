@@ -31,9 +31,7 @@ def calculate(units: tuple[TaskMetricUnit, ...]) -> MetricResult:
                 measures={f"excluded_{key}": value for key, value in sorted(exclusions.items())},
                 coverage=metric_coverage,
                 missing_inputs=tuple(
-                    sorted(
-                        f"task.reading:{unit.task_id}" for unit in units if not unit.covered
-                    )
+                    sorted(f"task.reading:{unit.task_id}" for unit in units if not unit.covered)
                 ),
                 provenance_refs=tuple(
                     sorted({ref for unit in covered for ref in unit.provenance_refs})

@@ -56,9 +56,7 @@ def calculate(units: tuple[OperationalCallUnit, ...]) -> MetricResult:
             )
         )
     if not slices:
-        return unavailable(
-            "operational-latency-ms", metric_coverage=coverage(0, len(units))
-        )
+        return unavailable("operational-latency-ms", metric_coverage=coverage(0, len(units)))
     return MetricResult(
         metric_id="operational-latency-ms", metric_version="2.0.0", slices=tuple(slices)
     )

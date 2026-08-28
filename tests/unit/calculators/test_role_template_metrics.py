@@ -48,4 +48,3 @@ def test_role_template_cost_keeps_template_and_usage_coordinates_exact() -> None
     assert metric_slice.coverage.raw_ratio == "20/21"
     assert metric_slice.compatibility["role_prompt_digest"] == f"sha256:{'a' * 64}"
     assert "cost_basis" not in metric_slice.compatibility
-

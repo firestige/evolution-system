@@ -28,9 +28,7 @@ def calculate(
         if item.kind == "money" and item.value is not None:
             groups[(call.cohort, item.compatibility)].append(item)
     if not groups:
-        return unavailable(
-            "operational-attributable-cost", metric_coverage=coverage(0, len(calls))
-        )
+        return unavailable("operational-attributable-cost", metric_coverage=coverage(0, len(calls)))
     slices = []
     for (cohort, usage_coordinate), values in sorted(groups.items()):
         candidate_calls = tuple(call for call in calls if call.cohort == cohort)

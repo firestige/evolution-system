@@ -9,9 +9,7 @@ from .protocol import CalculatorSlot
 SLOT = CalculatorSlot("trajectory-partial-cost@2.0.0", __name__)
 
 
-def calculate(
-    delivery_ids: tuple[str, ...], units: tuple[ReportedUsageUnit, ...]
-) -> MetricResult:
+def calculate(delivery_ids: tuple[str, ...], units: tuple[ReportedUsageUnit, ...]) -> MetricResult:
     if len(set(delivery_ids)) != len(delivery_ids):
         raise ValueError("Delivery population must be unique")
     population = set(delivery_ids)

@@ -2,9 +2,7 @@ from wsr_evolution.domain.models import DeliveryMetricUnit
 from wsr_evolution.domain.ports import FactReading
 
 
-def normalize_delivery(
-    delivery_id: str, facts: tuple[FactReading, ...]
-) -> DeliveryMetricUnit:
+def normalize_delivery(delivery_id: str, facts: tuple[FactReading, ...]) -> DeliveryMetricUnit:
     summaries = tuple(
         fact
         for fact in facts
@@ -39,7 +37,5 @@ def normalize_delivery(
         terminal_outcome=next(iter(outcomes), None),
         elapsed_time_ms=next(iter(elapsed_values), None),
         reached_stages=tuple(sorted(stages, key=str.encode)),
-        provenance_refs=tuple(
-            sorted({fact.accepted_digest for fact in summaries}, key=str.encode)
-        ),
+        provenance_refs=tuple(sorted({fact.accepted_digest for fact in summaries}, key=str.encode)),
     )

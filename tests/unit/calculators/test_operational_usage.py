@@ -58,4 +58,3 @@ def test_usage_for_unknown_call_is_rejected_instead_of_delivery_or_time_joined()
         assert "exact model call" in str(error)
     else:
         raise AssertionError("unbound Usage unexpectedly accepted")
-
