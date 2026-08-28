@@ -280,7 +280,7 @@ def test_explicit_zero_and_sample_withholding_are_distinct() -> None:
         ),
     )
 
-    assert available.model_dump(mode="json", exclude_none=True)["value"]["value"] == 0
+    assert available.model_dump(mode="json", exclude_none=True)["value"]["value"] == "0"
     assert "value" not in insufficient.model_dump(mode="json", exclude_none=True)
     assert insufficient.coverage.numerator == 9
 
@@ -314,6 +314,82 @@ def test_authoritative_ratio_uses_exact_reduced_rational_without_display_precisi
             precision=2,
             rounding="ROUND_HALF_EVEN",
         )
+
+    with pytest.raises(ValidationError):
+        ExactValue(
+            kind="BOOLEAN",
+            value=True,
+            unit="boolean",
+            precision=0,
+            rounding="ROUND_HALF_EVEN",
+        )
+
+
+def test_authoritative_integer_wire_values_are_canonical_decimal_strings() -> None:
+    large = 9_007_199_254_740_993
+    metric_slice = MetricSlice(
+        slice_key={},
+        state="AVAILABLE",
+        value=ExactValue(kind="COUNT", value=large, unit="count"),
+        measures={"observed": large},
+        numerator=large,
+        denominator=large,
+        contributing_count=large,
+        coverage=Coverage(
+            numerator=large,
+            denominator=large,
+            raw_ratio="1",
+            state="FULL",
+            alert=None,
+        ),
+    )
+
+    payload = metric_slice.model_dump(mode="json", exclude_none=True)
+
+    assert payload["value"]["value"] == str(large)
+    assert payload["measures"] == {"observed": str(large)}
+    assert payload["numerator"] == str(large)
+    assert payload["denominator"] == str(large)
+    assert payload["contributing_count"] == str(large)
+    assert payload["coverage"] == {
+        "numerator": str(large),
+        "denominator": str(large),
+        "raw_ratio": "1",
+        "state": "FULL",
+        "alert": None,
+    }
+
+
+def test_no_population_coverage_serializes_explicit_null_fields() -> None:
+    payload = Coverage(
+        numerator=0,
+        denominator=0,
+        raw_ratio=None,
+        state="NO_POPULATION",
+        alert=None,
+    ).model_dump(mode="json", exclude_none=True)
+
+    assert payload == {
+        "numerator": "0",
+        "denominator": "0",
+        "raw_ratio": None,
+        "state": "NO_POPULATION",
+        "alert": None,
+    }
+
+    schema = Coverage.model_json_schema(mode="serialization")
+    assert schema["required"] == [
+        "numerator",
+        "denominator",
+        "raw_ratio",
+        "state",
+        "alert",
+    ]
+    assert schema["properties"]["numerator"]["type"] == "string"
+    assert {item["type"] for item in schema["properties"]["raw_ratio"]["anyOf"]} == {
+        "string",
+        "null",
+    }
 
 
 @pytest.mark.parametrize(
