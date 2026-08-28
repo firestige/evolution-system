@@ -56,6 +56,24 @@ def fact_envelope() -> dict[str, Any]:
     }
 
 
+def finding_fix_envelope() -> dict[str, Any]:
+    payload = fact_envelope()
+    item = payload["items"][0]
+    item["id"] = "fact-fix-a"
+    item["kind"] = "FINDING_FIX"
+    item["relationships"] = [
+        {
+            "kind": "FINDING_FIX",
+            "from": {"kind": "FIX", "key": ["fix-a"]},
+            "to": {
+                "kind": "FINDING_TARGET",
+                "key": ["finding-a", "scope-a", "SECTION", "section-a", None],
+            },
+        }
+    ]
+    return payload
+
+
 def trace_envelope() -> dict[str, Any]:
     return {
         "contract": {"name": "evidence.query", "revision": "0.1.0"},
@@ -152,3 +170,23 @@ async def test_rejects_contract_drift_instead_of_coercing_observation_data() -> 
             await EvidenceHttpClient(transport).resolve_facts(
                 delivery_id="delivery-a", limit=200, cursor=None
             )
+
+
+@pytest.mark.asyncio
+async def test_preserves_typed_finding_fix_relationship() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=finding_fix_envelope())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://evidence.test"
+    ) as transport:
+        page = await EvidenceHttpClient(transport).resolve_facts(
+            delivery_id="delivery-a", limit=200, cursor=None
+        )
+
+    relationship = page.facts[0].relationships[0]
+    assert relationship.kind == "FINDING_FIX"
+    assert relationship.source.kind == "FIX"
+    assert relationship.source.key == ("fix-a",)
+    assert relationship.target.kind == "FINDING_TARGET"
+    assert relationship.target.key[-1] is None
