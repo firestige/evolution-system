@@ -162,6 +162,10 @@ class ExactValue(ClosedModel):
                 raise ValueError(
                     "exact rational values do not declare display precision or rounding"
                 )
+        elif self.kind == "DURATION_MS" and isinstance(self.value, str):
+            _parse_canonical_rational(self.value)
+            if self.precision is not None or self.rounding is not None:
+                raise ValueError("exact duration rationals do not declare display rounding")
         elif self.kind == "BOOLEAN":
             if not isinstance(self.value, bool):
                 raise ValueError("boolean values require a strict boolean")

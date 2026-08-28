@@ -19,6 +19,7 @@ def fact(fact_id: str) -> FactReading:
         source_identity=f"event:{fact_id}",
         recorded_at=datetime(2026, 8, 28, tzinfo=UTC),
         accepted_digest="a" * 64,
+        event_name="usage",
         completeness="FINAL",
         availability="AVAILABLE",
         expiry="ACTIVE",

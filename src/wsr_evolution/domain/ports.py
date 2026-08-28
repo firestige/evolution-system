@@ -12,6 +12,7 @@ class FactReading:
     source_identity: str
     recorded_at: datetime
     accepted_digest: str
+    event_name: str | None
     completeness: str | None
     availability: str
     expiry: str
