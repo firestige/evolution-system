@@ -179,7 +179,7 @@ class MetricResult(ClosedModel):
 
 class TaskPopulationEntry(ClosedModel):
     task_id: TaskId
-    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
     delivery_ids: tuple[str, ...]
     cohort_coordinates: dict[str, str] = Field(default_factory=dict)
     terminal_reading: str | None = None
