@@ -2,13 +2,20 @@ import ast
 import dataclasses
 import importlib
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from wsr_evolution.calculators.protocol import Calculator
 from wsr_evolution.domain.models import NormalizedMetricInput, NormalizedValue
-from wsr_evolution.domain.ports import EvidenceTaskReader, TaskPage, TaskSummary
+from wsr_evolution.domain.ports import (
+    EvidenceTaskReader,
+    TaskMembershipPage,
+    TaskMembershipSummary,
+    TaskPage,
+    TaskSummary,
+)
 
 ROOT = Path(__file__).parents[2]
 PACKAGE = ROOT / "src" / "wsr_evolution"
@@ -85,6 +92,22 @@ def test_task_port_exposes_identity_and_optional_name_without_route_guessing() -
     assert page.tasks[0].display_name is None
     assert EvidenceTaskReader.__name__ == "EvidenceTaskReader"
 
+    membership = TaskMembershipPage(
+        memberships=(
+            TaskMembershipSummary(
+                task_id="task-a",
+                delivery_id="delivery-a",
+                manifest_digest="a" * 64,
+                accepted_digest="b" * 64,
+                profile_version="2.0.0",
+            ),
+        ),
+        as_of=datetime(2026, 8, 28, tzinfo=UTC),
+        next_cursor="cursor-next",
+        route_snapshot="task-route-snapshot",
+    )
+    assert membership.next_cursor == "cursor-next"
+
 
 def test_package_imports_without_database_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in tuple(__import__("os").environ):
@@ -92,3 +115,18 @@ def test_package_imports_without_database_environment(monkeypatch: pytest.Monkey
             monkeypatch.delenv(name, raising=False)
 
     assert importlib.import_module("wsr_evolution.app") is not None
+
+
+def test_api_and_domain_layers_do_not_import_concrete_calculators() -> None:
+    concrete = {path.stem for path in SLOT_MODULES}
+    for path in (
+        *PACKAGE.glob("*.py"),
+        *(PACKAGE / "api").glob("*.py"),
+        *(PACKAGE / "domain").glob("*.py"),
+    ):
+        imports = imported_modules(path)
+        assert not any(
+            module.removeprefix("wsr_evolution.calculators.") in concrete
+            for module in imports
+            if module.startswith("wsr_evolution.calculators.")
+        )

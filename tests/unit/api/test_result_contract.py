@@ -19,6 +19,7 @@ from wsr_evolution.api.models import (
     SideError,
     SideResult,
     SingleResponse,
+    TaskMembershipReference,
     TaskPopulationEntry,
 )
 from wsr_evolution.catalog import CATALOG_COORDINATES
@@ -41,11 +42,31 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
         as_of=datetime(2026, 8, 28, 1, 0, tzinfo=UTC),
         resolved_at=datetime(2026, 8, 28, 1, 1, tzinfo=UTC),
         task_population=(
-            TaskPopulationEntry(task_id="task-b", delivery_ids=("delivery-2",)),
+            TaskPopulationEntry(
+                task_id="task-b",
+                memberships=(
+                    TaskMembershipReference(
+                        delivery_id="delivery-2",
+                        manifest_digest="2" * 64,
+                        provenance_ref="accepted:2",
+                    ),
+                ),
+            ),
             TaskPopulationEntry(
                 task_id="task-a",
                 display_name="Readable A",
-                delivery_ids=("delivery-3", "delivery-1"),
+                memberships=(
+                    TaskMembershipReference(
+                        delivery_id="delivery-3",
+                        manifest_digest="3" * 64,
+                        provenance_ref="accepted:3",
+                    ),
+                    TaskMembershipReference(
+                        delivery_id="delivery-1",
+                        manifest_digest="1" * 64,
+                        provenance_ref="accepted:1",
+                    ),
+                ),
             ),
         ),
         catalog=CatalogBinding(
@@ -58,20 +79,28 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
             EvidenceBinding(
                 route="/v1/evidence/traces",
                 canonical_filter={"delivery_id": "delivery-2"},
+                contract_revision="0.1.0",
+                observation_profile="1.0.0",
+                read_model_revision="1.0.0",
                 route_snapshot="trace-snapshot-1",
                 completion_state="COMPLETE",
             ),
             EvidenceBinding(
                 route="/v1/evidence/facts",
                 canonical_filter={"task_id": "task-a"},
+                contract_revision="0.1.0",
+                observation_profile="1.0.0",
+                read_model_revision="1.0.0",
                 route_snapshot="fact-snapshot-1",
                 completion_state="PARTIAL",
                 error_state="CURSOR_EXPIRED",
             ),
         ),
         input_refs=(
-            InputReference(kind="TRACE_NODE", identity="trace-z/span-z"),
-            InputReference(kind="FACT", identity="fact-a"),
+            InputReference(
+                kind="TRACE_NODE", identity="trace-z/span-z", provenance_ref="span-source-z"
+            ),
+            InputReference(kind="FACT", identity="fact-a", provenance_ref="accepted-a"),
         ),
         population_state="PARTIAL",
     )
@@ -80,7 +109,10 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
 
     assert payload["selection"]["task_ids"] == ["task-a", "task-b"]
     assert [entry["task_id"] for entry in payload["task_population"]] == ["task-a", "task-b"]
-    assert payload["task_population"][0]["delivery_ids"] == ["delivery-1", "delivery-3"]
+    assert [item["delivery_id"] for item in payload["task_population"][0]["memberships"]] == [
+        "delivery-1",
+        "delivery-3",
+    ]
     assert [binding["route"] for binding in payload["evidence_bindings"]] == [
         "/v1/evidence/facts",
         "/v1/evidence/traces",
@@ -232,7 +264,7 @@ def test_task_population_accepts_the_observation_display_name_bound() -> None:
         TaskPopulationEntry(
             task_id="task-a",
             display_name="n" * 160,
-            delivery_ids=("delivery-a",),
+            memberships=(),
         ).display_name
         == "n" * 160
     )
@@ -240,7 +272,7 @@ def test_task_population_accepts_the_observation_display_name_bound() -> None:
         TaskPopulationEntry(
             task_id="task-a",
             display_name="n" * 161,
-            delivery_ids=("delivery-a",),
+            memberships=(),
         )
 
 
@@ -309,7 +341,7 @@ def test_partial_compare_retains_successful_side_and_all_unresolved_deltas() -> 
             detail="Evidence did not answer",
         ),
         deltas=tuple(
-            DeltaEntry(metric_coordinate=item, state="SIDE_UNRESOLVED")
+            DeltaEntry(metric_coordinate=item, slice_key={}, state="SIDE_UNRESOLVED")
             for item in CATALOG_COORDINATES
         ),
     )
@@ -326,7 +358,59 @@ def test_partial_compare_retains_successful_side_and_all_unresolved_deltas() -> 
             left=side_result("task-a"),
             right=response.right,
             deltas=(
-                DeltaEntry(metric_coordinate=CATALOG_COORDINATES[0], state="AVAILABLE"),
+                DeltaEntry(
+                    metric_coordinate=CATALOG_COORDINATES[0],
+                    slice_key={},
+                    state="AVAILABLE",
+                ),
                 *response.deltas[1:],
             ),
+        )
+
+
+def test_full_compare_requires_one_delta_per_exact_metric_slice() -> None:
+    left = side_result("task-a")
+    right = side_result("task-b")
+    first = left.metric_results[0]
+    sliced = first.model_copy(
+        update={
+            "slices": (
+                first.slices[0].model_copy(update={"slice_key": {"outcome": "FAILED"}}),
+                first.slices[0].model_copy(update={"slice_key": {"outcome": "PASSED"}}),
+            )
+        }
+    )
+    left = left.model_copy(update={"metric_results": (sliced, *left.metric_results[1:])})
+    right = right.model_copy(update={"metric_results": (sliced, *right.metric_results[1:])})
+    deltas = [
+        DeltaEntry(metric_coordinate=coordinate, slice_key={}, state="WITHHELD")
+        for coordinate in CATALOG_COORDINATES[1:]
+    ]
+    deltas.extend(
+        DeltaEntry(
+            metric_coordinate=CATALOG_COORDINATES[0],
+            slice_key={"outcome": outcome},
+            state="WITHHELD",
+        )
+        for outcome in ("PASSED", "FAILED")
+    )
+
+    response = CompareResponse(
+        api_version=1,
+        mode="COMPARE",
+        status="FULL_COMPARE",
+        left=left,
+        right=right,
+        deltas=tuple(deltas),
+    )
+
+    assert len(response.deltas) == 15
+    with pytest.raises(ValidationError):
+        CompareResponse(
+            api_version=1,
+            mode="COMPARE",
+            status="FULL_COMPARE",
+            left=left,
+            right=right,
+            deltas=response.deltas[:-1],
         )
