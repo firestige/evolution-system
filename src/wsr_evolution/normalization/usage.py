@@ -27,6 +27,7 @@ def normalize_reported_usage(
             or fact.event_name != "usage"
             or fact.availability != "AVAILABLE"
             or fact.expiry != "ACTIVE"
+            or fact.completeness not in {"FINAL", "LOWER_BOUND"}
         ):
             continue
         fields = fact.field_map
@@ -49,6 +50,7 @@ def normalize_reported_usage(
                 source_id=source_id,
                 value=value,
                 provenance_refs=(fact.accepted_digest,),
+                lower_bound=fact.completeness == "LOWER_BOUND",
             )
         )
     return tuple(sorted(units, key=lambda item: item.usage_identity.encode()))

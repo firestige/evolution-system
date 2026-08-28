@@ -1,3 +1,4 @@
+from decimal import Decimal
 from fractions import Fraction
 
 from wsr_evolution.api.models import ExactValue, MetricResult, MetricSlice
@@ -15,7 +16,10 @@ def calculate(units: tuple[DeliveryMetricUnit, ...]) -> MetricResult:
     metric_coverage = coverage(len(covered), len(terminal))
     if not covered:
         return unavailable("delivery-cycle-time-ms", metric_coverage=metric_coverage)
-    total = sum(unit.elapsed_time_ms for unit in covered if unit.elapsed_time_ms is not None)
+    total = sum(
+        (Fraction(unit.elapsed_time_ms) for unit in covered if unit.elapsed_time_ms is not None),
+        Fraction(),
+    )
     average = Fraction(total, len(covered))
     value: int | str = average.numerator if average.denominator == 1 else rational(average)
     missing = tuple(
@@ -33,7 +37,13 @@ def calculate(units: tuple[DeliveryMetricUnit, ...]) -> MetricResult:
                 slice_key={},
                 state="AVAILABLE",
                 value=ExactValue(kind="DURATION_MS", value=value, unit="milliseconds"),
-                measures={"sum_ms": total},
+                measures={
+                    "sum_ms": (
+                        total.numerator
+                        if total.denominator == 1
+                        else format(Decimal(total.numerator) / Decimal(total.denominator), "f")
+                    )
+                },
                 contributing_count=len(covered),
                 coverage=metric_coverage,
                 missing_inputs=missing,

@@ -26,16 +26,15 @@ def calculate(
         assert cohort is not None
         group = tuple(call for call in calls if call.cohort == cohort)
         covered = tuple(call for call in group if call.call_identity in classifications)
-        if not covered:
-            continue
         covered_ids = {call.call_identity for call in covered}
         applicable = sum(classifications[call.call_identity] for call in covered)
         provider, model, role, runtime = cohort
         slices.append(
             MetricSlice(
                 slice_key={"provider": provider, "model": model, "role": role, "runtime": runtime},
-                state="AVAILABLE",
-                value=ratio_value(applicable, len(covered)),
+                state="AVAILABLE" if covered else "UNAVAILABLE",
+                value=ratio_value(applicable, len(covered)) if covered else None,
+                withholding_reason=None if covered else "MISSING_INPUT",
                 numerator=applicable,
                 denominator=len(covered),
                 coverage=coverage(len(covered), len(group)),
@@ -64,7 +63,7 @@ def calculate(
                 ),
             )
         )
-    if not slices:
+    if not calls:
         return unavailable(
             "operational-usage-availability", metric_coverage=coverage(0, len(calls))
         )

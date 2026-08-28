@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from fractions import Fraction
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +29,7 @@ class NormalizedMetricInput:
 class DeliveryMetricUnit:
     delivery_id: str
     terminal_outcome: str | None
-    elapsed_time_ms: int | None
+    elapsed_time_ms: int | Fraction | None
     reached_stages: tuple[str, ...]
     provenance_refs: tuple[str, ...]
 
@@ -97,6 +98,7 @@ class ReportedUsageUnit:
     source_id: str
     value: int
     provenance_refs: tuple[str, ...]
+    lower_bound: bool = False
 
     @property
     def compatibility(self) -> tuple[str, str, str, str]:
@@ -129,6 +131,7 @@ class RoleTemplateUsageUnit:
     source_id: str
     value: int
     provenance_refs: tuple[str, ...]
+    lower_bound: bool = False
 
     @property
     def template(self) -> tuple[str, str, str]:

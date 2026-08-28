@@ -12,17 +12,20 @@ from wsr_evolution.api.models import (
     CompareResponse,
     ComputeRequest,
     ComputeResponse,
+    Coverage,
     DeltaEntry,
     EvaluationSelection,
     EvidenceBinding,
     ExactValue,
     InputReference,
+    MetricResult,
     MetricSlice,
     ResolvedEvaluationContext,
     SideError,
     SideResult,
     SingleRequest,
     SingleResponse,
+    TaskPopulationEntry,
 )
 from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
 from wsr_evolution.calculators import (
@@ -42,8 +45,10 @@ from wsr_evolution.calculators import (
 from wsr_evolution.catalog import CATALOG_SEMANTIC_DIGEST
 from wsr_evolution.domain.models import (
     OperationalCallUnit,
+    ReportedUsageUnit,
     RoleModelTaskUnit,
     RoleTemplateTaskUnit,
+    RoleTemplateUsageUnit,
     TaskMetricUnit,
 )
 from wsr_evolution.normalization.delivery import normalize_delivery
@@ -90,7 +95,12 @@ def _unique_references(items: tuple[InputReference, ...]) -> tuple[InputReferenc
 
 def _population_state(
     tasks: tuple[TaskMetricUnit, ...],
+    trace_states: tuple[str, ...],
 ) -> Literal["COMPLETE", "PARTIAL", "OPEN", "MIXED", "EXPIRED"]:
+    if "EXPIRED" in trace_states:
+        return "EXPIRED"
+    if "PARTIAL" in trace_states:
+        return "PARTIAL"
     if any(not task.covered for task in tasks):
         return "PARTIAL"
     classifications = {task.classification for task in tasks}
@@ -99,6 +109,28 @@ def _population_state(
     if "MIXED_DELIVERY_OUTCOMES" in classifications:
         return "MIXED"
     return "COMPLETE"
+
+
+def _trace_withheld(metric_id: str, *, trace_state: str, denominator: int) -> MetricResult:
+    metric_coverage = Coverage(
+        numerator=0,
+        denominator=denominator,
+        raw_ratio=None if denominator == 0 else "0",
+        state="NO_POPULATION" if denominator == 0 else "NO_COVERAGE",
+        alert=None if denominator == 0 else "LOW_COVERAGE",
+    )
+    return MetricResult(
+        metric_id=metric_id,
+        metric_version="2.0.0",
+        slices=(
+            MetricSlice(
+                slice_key={},
+                state="EXPIRED" if trace_state == "EXPIRED" else "UNAVAILABLE",
+                withholding_reason="EXPIRED_INPUT",
+                coverage=metric_coverage,
+            ),
+        ),
+    )
 
 
 class EvolutionComputeService:
@@ -136,16 +168,28 @@ class EvolutionComputeService:
                         delivery_id=membership.delivery_id
                     )
 
+        facts_by_delivery = {
+            delivery_id: tuple(fact for fact in observation.facts if fact.recorded_at <= as_of)
+            for delivery_id, observation in observations.items()
+        }
+        nodes_by_delivery = {
+            delivery_id: (
+                tuple(node for node in observation.trace_nodes if node.recorded_at <= as_of)
+                if observation.trace_state == "AVAILABLE"
+                else ()
+            )
+            for delivery_id, observation in observations.items()
+        }
         try:
             deliveries = tuple(
-                normalize_delivery(delivery_id, observation.facts)
-                for delivery_id, observation in sorted(observations.items())
+                normalize_delivery(delivery_id, facts)
+                for delivery_id, facts in sorted(facts_by_delivery.items())
             )
         except ValueError as error:
             raise UpstreamContractMismatch("Evidence normalization conflict") from error
         calls_by_delivery = {
-            delivery_id: normalize_model_calls(observation.trace_nodes)
-            for delivery_id, observation in observations.items()
+            delivery_id: normalize_model_calls(nodes)
+            for delivery_id, nodes in nodes_by_delivery.items()
         }
         calls = tuple(
             call
@@ -154,8 +198,8 @@ class EvolutionComputeService:
         )
         usage = tuple(
             item
-            for delivery_id, observation in sorted(observations.items())
-            for item in normalize_reported_usage(delivery_id, observation.facts)
+            for delivery_id, facts in sorted(facts_by_delivery.items())
+            for item in normalize_reported_usage(delivery_id, facts)
         )
 
         tasks = tuple(
@@ -182,24 +226,94 @@ class EvolutionComputeService:
         )
         role_model_units = self._role_model_units(population, task_by_id, calls_by_delivery)
         role_template_units = self._role_template_units(population, task_by_id, calls_by_delivery)
+        role_template_usage = self._role_template_usage_units(
+            population.task_population, role_template_units, usage
+        )
         delivery_ids = tuple(item.delivery_id for item in deliveries)
+        trace_states = tuple(observation.trace_state for observation in observations.values())
+        degraded_trace_state = (
+            "EXPIRED"
+            if "EXPIRED" in trace_states
+            else "PARTIAL"
+            if "PARTIAL" in trace_states
+            else None
+        )
+        eligible_tasks = sum(task.classification == "ELIGIBLE" for task in tasks)
 
         # The current public Fact response does not expose the Usage Event's native
         # Span identity. Call-scoped Usage and repair attribution therefore remain
         # explicit coverage holes instead of being guessed by Delivery or time.
         results = (
-            role_template_rework_rate.calculate(role_template_units),
-            role_template_trajectory_partial_cost.calculate(role_template_units, ()),
-            role_model_task_outcome_rate.calculate(role_model_units),
-            operational_latency_ms.calculate(calls),
+            (
+                _trace_withheld(
+                    "role-template-rework-rate",
+                    trace_state=degraded_trace_state,
+                    denominator=eligible_tasks,
+                )
+                if degraded_trace_state is not None
+                else role_template_rework_rate.calculate(role_template_units)
+            ),
+            (
+                _trace_withheld(
+                    "role-template-trajectory-partial-cost",
+                    trace_state=degraded_trace_state,
+                    denominator=eligible_tasks,
+                )
+                if degraded_trace_state is not None
+                else role_template_trajectory_partial_cost.calculate(
+                    role_template_units, role_template_usage
+                )
+            ),
+            (
+                _trace_withheld(
+                    "role-model-task-outcome-rate",
+                    trace_state=degraded_trace_state,
+                    denominator=eligible_tasks,
+                )
+                if degraded_trace_state is not None
+                else role_model_task_outcome_rate.calculate(role_model_units)
+            ),
+            (
+                _trace_withheld(
+                    "operational-latency-ms",
+                    trace_state=degraded_trace_state,
+                    denominator=0,
+                )
+                if degraded_trace_state is not None
+                else operational_latency_ms.calculate(calls)
+            ),
             trajectory_partial_cost.calculate(delivery_ids, usage),
             task_cohort_comparison_eligibility.calculate(tasks),
             delivery_stage_reach.calculate(deliveries),
             delivery_terminal_outcome_rate.calculate(deliveries),
             delivery_cycle_time_ms.calculate(deliveries),
-            operational_token_usage.calculate(calls),
-            operational_attributable_cost.calculate(calls, ()),
-            operational_usage_availability.calculate(calls, ()),
+            (
+                _trace_withheld(
+                    "operational-token-usage",
+                    trace_state=degraded_trace_state,
+                    denominator=0,
+                )
+                if degraded_trace_state is not None
+                else operational_token_usage.calculate(calls)
+            ),
+            (
+                _trace_withheld(
+                    "operational-attributable-cost",
+                    trace_state=degraded_trace_state,
+                    denominator=0,
+                )
+                if degraded_trace_state is not None
+                else operational_attributable_cost.calculate(calls, ())
+            ),
+            (
+                _trace_withheld(
+                    "operational-usage-availability",
+                    trace_state=degraded_trace_state,
+                    denominator=0,
+                )
+                if degraded_trace_state is not None
+                else operational_usage_availability.calculate(calls, ())
+            ),
         )
 
         observation_bindings = tuple(
@@ -208,9 +322,29 @@ class EvolutionComputeService:
             for binding in observations[delivery_id].evidence_bindings
         )
         observation_refs = tuple(
-            reference
-            for delivery_id in sorted(observations, key=str.encode)
-            for reference in observations[delivery_id].input_refs
+            sorted(
+                (
+                    *(
+                        InputReference(
+                            kind="FACT",
+                            identity=fact.fact_id,
+                            provenance_ref=fact.accepted_digest,
+                        )
+                        for facts in facts_by_delivery.values()
+                        for fact in facts
+                    ),
+                    *(
+                        InputReference(
+                            kind="TRACE_NODE",
+                            identity=node.resource_id,
+                            provenance_ref=node.source_identity,
+                        )
+                        for nodes in nodes_by_delivery.values()
+                        for node in nodes
+                    ),
+                ),
+                key=lambda item: (item.kind.encode(), item.identity.encode()),
+            )
         )
         receipt = ResolvedEvaluationContext(
             context_version=1,
@@ -229,7 +363,7 @@ class EvolutionComputeService:
             ),
             input_refs=_unique_references((*population.input_refs, *observation_refs)),
             workflow_resolutions=population.workflow_resolutions,
-            population_state=_population_state(tasks),
+            population_state=_population_state(tasks, trace_states),
         )
         return SideResult(tag="SIDE_RESULT", receipt=receipt, metric_results=results)
 
@@ -316,6 +450,41 @@ class EvolutionComputeService:
                         ),
                     )
         return tuple(result[key] for key in sorted(result))
+
+    @staticmethod
+    def _role_template_usage_units(
+        population: tuple[TaskPopulationEntry, ...],
+        tasks: tuple[RoleTemplateTaskUnit, ...],
+        usage: tuple[ReportedUsageUnit, ...],
+    ) -> tuple[RoleTemplateUsageUnit, ...]:
+        deliveries_by_task = {
+            entry.task_id: {membership.delivery_id for membership in entry.memberships}
+            for entry in population
+        }
+        result = []
+        for task in tasks:
+            delivery_ids = deliveries_by_task.get(task.task_id, set())
+            for item in usage:
+                if item.delivery_id not in delivery_ids:
+                    continue
+                result.append(
+                    RoleTemplateUsageUnit(
+                        task_id=task.task_id,
+                        role_id=task.role_id,
+                        role_prompt_identity=task.role_prompt_identity,
+                        role_prompt_digest=task.role_prompt_digest,
+                        kind=item.kind,
+                        unit=item.unit,
+                        source=item.source,
+                        source_id=item.source_id,
+                        value=item.value,
+                        provenance_refs=tuple(
+                            sorted({*task.provenance_refs, *item.provenance_refs})
+                        ),
+                        lower_bound=item.lower_bound,
+                    )
+                )
+        return tuple(result)
 
     async def _compute_compare(self, request: CompareRequest) -> CompareResponse:
         left: SideResult | SideError

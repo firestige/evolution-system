@@ -16,8 +16,6 @@ def calculate(units: tuple[OperationalCallUnit, ...]) -> MetricResult:
         provider, model, role, runtime = cohort
         for direction, attribute in (("input", "input_tokens"), ("output", "output_tokens")):
             covered = tuple(unit for unit in group if getattr(unit, attribute) is not None)
-            if not covered:
-                continue
             total = sum(int(getattr(unit, attribute)) for unit in covered)
             slices.append(
                 MetricSlice(
@@ -28,8 +26,11 @@ def calculate(units: tuple[OperationalCallUnit, ...]) -> MetricResult:
                         "runtime": runtime,
                         "direction": direction,
                     },
-                    state="AVAILABLE",
-                    value=ExactValue(kind="QUANTITY", value=total, unit="tokens"),
+                    state="AVAILABLE" if covered else "UNAVAILABLE",
+                    value=(
+                        ExactValue(kind="QUANTITY", value=total, unit="tokens") if covered else None
+                    ),
+                    withholding_reason=None if covered else "MISSING_INPUT",
                     contributing_count=len(covered),
                     coverage=coverage(len(covered), len(group)),
                     compatibility={
@@ -51,7 +52,7 @@ def calculate(units: tuple[OperationalCallUnit, ...]) -> MetricResult:
                     ),
                 )
             )
-    if not slices:
+    if not cohorts:
         return unavailable("operational-token-usage", metric_coverage=coverage(0, len(units)))
     return MetricResult(
         metric_id="operational-token-usage", metric_version="2.0.0", slices=tuple(slices)

@@ -26,6 +26,7 @@ def calculate(delivery_ids: tuple[str, ...], units: tuple[ReportedUsageUnit, ...
     slices = []
     for compatibility in sorted(groups):
         group = tuple(groups[compatibility])
+        lower_bound = any(item.lower_bound for item in group)
         covered_ids = {unit.delivery_id for unit in group}
         kind, unit_name, source, source_id = compatibility
         sample_sufficient = len(covered_ids) >= 20
@@ -37,7 +38,13 @@ def calculate(delivery_ids: tuple[str, ...], units: tuple[ReportedUsageUnit, ...
                     "source": source,
                     "source_id": source_id,
                 },
-                state="AVAILABLE" if sample_sufficient else "UNAVAILABLE",
+                state=(
+                    "LOWER_BOUND"
+                    if sample_sufficient and lower_bound
+                    else "AVAILABLE"
+                    if sample_sufficient
+                    else "UNAVAILABLE"
+                ),
                 value=(
                     ExactValue(
                         kind="MONEY",
