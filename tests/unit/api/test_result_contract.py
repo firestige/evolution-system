@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Literal, cast
 
 import pytest
 from pydantic import ValidationError
@@ -228,9 +229,11 @@ def minimal_context(task_id: str) -> ResolvedEvaluationContext:
 
 def unavailable_result(coordinate: str) -> MetricResult:
     metric_id, metric_version = coordinate.rsplit("@", 1)
+    assert metric_version == "1.0.0"
+    bound_version = cast(Literal["1.0.0"], metric_version)
     return MetricResult(
         metric_id=metric_id,
-        metric_version=metric_version,
+        metric_version=bound_version,
         slices=(
             MetricSlice(
                 slice_key={},
@@ -260,17 +263,19 @@ def test_successful_side_requires_exact_fourteen_catalog_coordinates() -> None:
     response = SingleResponse(api_version=1, mode="SINGLE", result=side_result("task-a"))
 
     assert len(response.result.metric_results) == 14
-    assert tuple(
-        f"{result.metric_id}@{result.metric_version}" for result in response.result.metric_results
-    ) == CATALOG_COORDINATES
+    assert (
+        tuple(
+            f"{result.metric_id}@{result.metric_version}"
+            for result in response.result.metric_results
+        )
+        == CATALOG_COORDINATES
+    )
 
     with pytest.raises(ValidationError):
         SideResult(
             tag="SIDE_RESULT",
             receipt=minimal_context("task-a"),
-            metric_results=tuple(
-                unavailable_result(item) for item in CATALOG_COORDINATES[:-1]
-            ),
+            metric_results=tuple(unavailable_result(item) for item in CATALOG_COORDINATES[:-1]),
         )
 
 

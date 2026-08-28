@@ -14,7 +14,6 @@ from pydantic import (
 
 from wsr_evolution.catalog import CATALOG_COORDINATES
 
-
 TaskId = Annotated[
     str,
     StringConstraints(
@@ -149,7 +148,9 @@ class MetricSlice(ClosedModel):
         has_value = self.value is not None
         if self.state in {"AVAILABLE", "LOWER_BOUND"}:
             if not has_value or self.withholding_reason is not None:
-                raise ValueError("available and lower-bound states require value without withholding")
+                raise ValueError(
+                    "available and lower-bound states require value without withholding"
+                )
         elif has_value or self.withholding_reason is None:
             raise ValueError("withheld truth states forbid value and require a reason")
         return self
@@ -261,8 +262,7 @@ class SideResult(ClosedModel):
     @model_validator(mode="after")
     def validate_catalog_completeness(self) -> Self:
         by_coordinate = {
-            f"{result.metric_id}@{result.metric_version}": result
-            for result in self.metric_results
+            f"{result.metric_id}@{result.metric_version}": result for result in self.metric_results
         }
         if len(by_coordinate) != len(self.metric_results):
             raise ValueError("metric result coordinates must be unique")
@@ -329,7 +329,9 @@ class CompareResponse(ClosedModel):
             if results != 1 or any(entry.state != "SIDE_UNRESOLVED" for entry in ordered):
                 raise ValueError("partial compare requires one side result and unresolved Deltas")
         elif results != 2 or any(entry.state == "SIDE_UNRESOLVED" for entry in ordered):
-            raise ValueError("full compare requires two side results and resolved Delta disposition")
+            raise ValueError(
+                "full compare requires two side results and resolved Delta disposition"
+            )
         object.__setattr__(self, "deltas", ordered)
         return self
 
