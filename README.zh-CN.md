@@ -17,14 +17,14 @@ Iteration 5 明确不包含 Workflow 编辑、改进应用、AI 归因和 meta-r
 ## 开发者预览
 
 当前候选提供封闭、无副作用的 compute 边界、精确的 12-coordinate registry、12/12
-candidate metric 的 pure formula，以及 Task membership、Manifest projection、Facts 和
-recorded Trace nodes 的 typed reader/resolver。Delivery、operational、Task、Role/model、
-Role-template 与 exact reported-Usage calculator input 在关联缺失时 fail closed。
+candidate metric pure formula、typed Evidence/Workflow resolver，以及端到端
+SINGLE/FULL_COMPARE/PARTIAL_COMPARE 编排。每个成功 side 都返回恰好 12 项 Metric
+Results 与绑定 resolved read set 的 receipt；单项 coverage 空洞不会使其他结果失败。
 
-端到端 compute orchestration，以及 Usage Event native Span identity 的物理 projection，仍是
-Wave5 未完成工作。该 exact call binding 尚未公开时，call-scoped Usage availability/cost
-只产生 missing coverage；绝不按 Delivery identity、timestamp、arrival order 或文本关联。
-2.0 Catalog 仍是 review candidate，**正式发布前仍可能发生破坏兼容性的变更。**
+当前 public Fact projection 仍不暴露 Usage Event native Span identity，也没有 recorded
+repair-to-Role attribution。对应的 call-/Role-scoped input 因而产生显式 missing coverage；
+绝不按 Delivery identity、timestamp、arrival order 或文本猜关联。2.0 Catalog 仍是 review
+candidate，**正式发布前仍可能发生破坏兼容性的变更。**
 
 ## 开发
 
