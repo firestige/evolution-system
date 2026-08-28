@@ -85,3 +85,19 @@ class RoleModelTaskUnit:
     @property
     def cohort(self) -> tuple[str, str, str, str]:
         return (self.provider, self.model, self.role, self.runtime)
+
+
+@dataclass(frozen=True, slots=True)
+class ReportedUsageUnit:
+    usage_identity: str
+    delivery_id: str
+    kind: str
+    unit: str
+    source: str
+    source_id: str
+    value: int
+    provenance_refs: tuple[str, ...]
+
+    @property
+    def compatibility(self) -> tuple[str, str, str, str]:
+        return (self.kind, self.unit, self.source, self.source_id)
