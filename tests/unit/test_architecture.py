@@ -100,6 +100,8 @@ def test_task_port_exposes_identity_and_optional_name_without_route_guessing() -
                 manifest_digest="a" * 64,
                 accepted_digest="b" * 64,
                 profile_version="2.0.0",
+                source_identity="event:task-event-a",
+                recorded_at=datetime(2026, 8, 28, tzinfo=UTC),
             ),
         ),
         as_of=datetime(2026, 8, 28, tzinfo=UTC),
@@ -119,11 +121,9 @@ def test_package_imports_without_database_environment(monkeypatch: pytest.Monkey
 
 def test_api_and_domain_layers_do_not_import_concrete_calculators() -> None:
     concrete = {path.stem for path in SLOT_MODULES}
-    for path in (
-        *PACKAGE.glob("*.py"),
-        *(PACKAGE / "api").glob("*.py"),
-        *(PACKAGE / "domain").glob("*.py"),
-    ):
+    for path in PACKAGE.rglob("*.py"):
+        if (PACKAGE / "calculators") in path.parents:
+            continue
         imports = imported_modules(path)
         assert not any(
             module.removeprefix("wsr_evolution.calculators.") in concrete

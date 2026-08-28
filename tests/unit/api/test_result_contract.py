@@ -48,7 +48,10 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
                     TaskMembershipReference(
                         delivery_id="delivery-2",
                         manifest_digest="2" * 64,
-                        provenance_ref="accepted:2",
+                        accepted_digest="a" * 64,
+                        profile_version="2.0.0",
+                        source_identity="event:task-2",
+                        recorded_at=datetime(2026, 8, 28, tzinfo=UTC),
                     ),
                 ),
             ),
@@ -59,12 +62,18 @@ def test_receipt_canonicalizes_route_local_read_set_without_global_snapshot() ->
                     TaskMembershipReference(
                         delivery_id="delivery-3",
                         manifest_digest="3" * 64,
-                        provenance_ref="accepted:3",
+                        accepted_digest="b" * 64,
+                        profile_version="2.0.0",
+                        source_identity="event:task-3",
+                        recorded_at=datetime(2026, 8, 28, tzinfo=UTC),
                     ),
                     TaskMembershipReference(
                         delivery_id="delivery-1",
                         manifest_digest="1" * 64,
-                        provenance_ref="accepted:1",
+                        accepted_digest="c" * 64,
+                        profile_version="2.0.0",
+                        source_identity="event:task-1",
+                        recorded_at=datetime(2026, 8, 28, tzinfo=UTC),
                     ),
                 ),
             ),
@@ -134,7 +143,7 @@ def test_receipt_rejects_global_snapshot_or_manifest_fields(unknown: str) -> Non
         "selection": {"selection_version": 1, "task_ids": ["task-a"]},
         "as_of": "2026-08-28T01:00:00Z",
         "resolved_at": "2026-08-28T01:01:00Z",
-        "task_population": [],
+        "task_population": [{"task_id": "task-a", "memberships": []}],
         "catalog": {
             "catalog_id": "agentops.evaluation.metric-catalog",
             "version": "1.0.0",
@@ -246,7 +255,7 @@ def minimal_context(task_id: str) -> ResolvedEvaluationContext:
         selection=EvaluationSelection(selection_version=1, task_ids=(task_id,)),
         as_of=datetime(2026, 8, 28, 1, 0, tzinfo=UTC),
         resolved_at=datetime(2026, 8, 28, 1, 1, tzinfo=UTC),
-        task_population=(),
+        task_population=(TaskPopulationEntry(task_id=task_id, memberships=()),),
         catalog=CatalogBinding(
             catalog_id="agentops.evaluation.metric-catalog",
             version="1.0.0",
@@ -273,6 +282,40 @@ def test_task_population_accepts_the_observation_display_name_bound() -> None:
             task_id="task-a",
             display_name="n" * 161,
             memberships=(),
+        )
+
+
+def test_receipt_rejects_route_revision_or_selection_population_mismatch() -> None:
+    context = minimal_context("task-a")
+    with pytest.raises(ValidationError):
+        EvidenceBinding(
+            route="/v1/evidence/tasks",
+            canonical_filter={},
+            contract_revision="0.1.0",
+            observation_profile="1.0.0",
+            read_model_revision="1.0.0",
+            route_snapshot="snapshot",
+            completion_state="COMPLETE",
+        )
+    with pytest.raises(ValidationError):
+        ResolvedEvaluationContext(
+            **{
+                **context.model_dump(),
+                "task_population": (),
+            }
+        )
+
+
+def test_delta_direction_and_withholding_are_closed() -> None:
+    with pytest.raises(ValidationError):
+        DeltaEntry(metric_coordinate=CATALOG_COORDINATES[0], slice_key={}, state="WITHHELD")
+    with pytest.raises(ValidationError):
+        DeltaEntry(
+            metric_coordinate=CATALOG_COORDINATES[0],
+            slice_key={},
+            state="AVAILABLE",
+            value=ExactValue(kind="COUNT", value=1, unit="count"),
+            direction="DECREASE",
         )
 
 
@@ -383,7 +426,12 @@ def test_full_compare_requires_one_delta_per_exact_metric_slice() -> None:
     left = left.model_copy(update={"metric_results": (sliced, *left.metric_results[1:])})
     right = right.model_copy(update={"metric_results": (sliced, *right.metric_results[1:])})
     deltas = [
-        DeltaEntry(metric_coordinate=coordinate, slice_key={}, state="WITHHELD")
+        DeltaEntry(
+            metric_coordinate=coordinate,
+            slice_key={},
+            state="WITHHELD",
+            withholding_reason="MISSING_VALUE",
+        )
         for coordinate in CATALOG_COORDINATES[1:]
     ]
     deltas.extend(
@@ -391,6 +439,7 @@ def test_full_compare_requires_one_delta_per_exact_metric_slice() -> None:
             metric_coordinate=CATALOG_COORDINATES[0],
             slice_key={"outcome": outcome},
             state="WITHHELD",
+            withholding_reason="MISSING_VALUE",
         )
         for outcome in ("PASSED", "FAILED")
     )
