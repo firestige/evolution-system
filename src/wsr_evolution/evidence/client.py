@@ -1,17 +1,31 @@
+import json
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from hashlib import sha256
+from typing import Annotated, Literal, Self
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    model_validator,
+)
 
 from wsr_evolution.api.models import Digest, TaskId
 from wsr_evolution.application import UpstreamContractMismatch, UpstreamUnavailable
 from wsr_evolution.domain.ports import (
+    DeliveryManifestReading,
+    ManifestRoleBinding,
+    ManifestWorkflow,
     TaskMembershipPage,
     TaskMembershipSummary,
     TaskPage,
     TaskSummary,
 )
+
+Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[a-f0-9]{64}$")]
 
 
 class _ClosedModel(BaseModel):
@@ -77,6 +91,88 @@ class _TaskListEnvelope(_ClosedModel):
     snapshot: str = Field(min_length=1, max_length=512)
     items: tuple[_TaskListItem, ...]
     next_cursor: str | None
+
+
+class _ManifestWorkflow(_ClosedModel):
+    package_name: str = Field(min_length=1, max_length=128)
+    exact_package_version: str = Field(
+        pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"
+    )
+    package_digest: Sha256Digest
+    workflow_id: str = Field(min_length=1, max_length=128)
+    workflow_version: str = Field(pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+    snapshot_id: str = Field(min_length=1, max_length=128)
+    snapshot_digest: Sha256Digest
+
+
+class _RepositoryBindings(_ClosedModel):
+    document_state: Literal["ABSENT", "PRESENT"]
+    document_digest: Sha256Digest | None = None
+    resolved_map_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def exact_document_state(self) -> Self:
+        if (self.document_state == "PRESENT") != (self.document_digest is not None):
+            raise ValueError("repository document digest applicability mismatch")
+        return self
+
+
+class _ManifestRole(_ClosedModel):
+    role_id: str = Field(min_length=1, max_length=128)
+    role_prompt_identity: str = Field(min_length=1, max_length=128)
+    role_prompt_digest: Sha256Digest
+    agent_provider_id: str = Field(min_length=1, max_length=128)
+    model_provider_id: str = Field(min_length=1, max_length=128)
+    model_id: str = Field(min_length=1, max_length=128)
+    resolution_source: Literal["REPOSITORY", "EXECUTION_DEFAULT"]
+
+
+class _ManifestProjection(_ClosedModel):
+    schema_version: Literal["execution.delivery-manifest-projection@1.0.0"]
+    delivery_id: str = Field(min_length=1, max_length=256)
+    task_id: TaskId
+    manifest_digest: Digest
+    workflow: _ManifestWorkflow
+    repository_model_bindings: _RepositoryBindings
+    roles: tuple[_ManifestRole, ...] = Field(max_length=128)
+
+    @model_validator(mode="after")
+    def exact_role_map(self) -> Self:
+        role_ids = tuple(role.role_id for role in self.roles)
+        if role_ids != tuple(sorted(set(role_ids), key=lambda value: value.encode())):
+            raise ValueError("Manifest Roles must be unique and bytewise sorted")
+        resolved = [
+            {
+                "roleId": role.role_id,
+                "rolePromptIdentity": role.role_prompt_identity,
+                "rolePromptDigest": role.role_prompt_digest,
+                "agentProviderId": role.agent_provider_id,
+                "modelProviderId": role.model_provider_id,
+                "modelId": role.model_id,
+                "resolutionSource": role.resolution_source,
+            }
+            for role in self.roles
+        ]
+        digest = (
+            "sha256:"
+            + sha256(
+                json.dumps(
+                    resolved, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+        )
+        if digest != self.repository_model_bindings.resolved_map_digest:
+            raise ValueError("resolved Role map digest mismatch")
+        return self
+
+
+class _ManifestEnvelope(_ClosedModel):
+    contract: _Contract
+    observation_profile: Literal["2.0.0"]
+    read_model_revision: Literal["2.0.0"]
+    manifest: _ManifestProjection
+    manifest_projection_digest: Digest
+    provenance: _TaskProvenance
 
 
 def _normalized_utc(value: datetime) -> str:
@@ -150,6 +246,42 @@ class EvidenceHttpClient:
             as_of=as_of,
             next_cursor=envelope.next_cursor,
             route_snapshot=envelope.snapshot,
+        )
+
+    async def resolve_manifest(self, *, manifest_digest: str) -> DeliveryManifestReading:
+        payload = await self._get(
+            "/v1/evidence/manifests", params={"manifest_digest": manifest_digest}
+        )
+        try:
+            envelope = _ManifestEnvelope.model_validate(payload)
+            canonical = json.dumps(
+                envelope.manifest.model_dump(mode="json"),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if (
+                envelope.manifest.manifest_digest != manifest_digest
+                or sha256(canonical.encode()).hexdigest() != envelope.manifest_projection_digest
+            ):
+                raise ValueError("Manifest projection identity or digest mismatch")
+        except (ValidationError, ValueError) as error:
+            raise UpstreamContractMismatch("Evidence Manifest contract mismatch") from error
+        manifest = envelope.manifest
+        repository = manifest.repository_model_bindings
+        return DeliveryManifestReading(
+            delivery_id=manifest.delivery_id,
+            task_id=manifest.task_id,
+            manifest_digest=manifest.manifest_digest,
+            projection_digest=envelope.manifest_projection_digest,
+            workflow=ManifestWorkflow(**manifest.workflow.model_dump()),
+            repository_document_state=repository.document_state,
+            repository_document_digest=repository.document_digest,
+            resolved_map_digest=repository.resolved_map_digest,
+            roles=tuple(ManifestRoleBinding(**role.model_dump()) for role in manifest.roles),
+            accepted_digest=envelope.provenance.accepted_digest,
+            profile_version=envelope.provenance.profile_version,
+            source_identity=_source_identity(envelope.provenance.source),
         )
 
     async def _get(self, path: str, *, params: dict[str, str]) -> object:
