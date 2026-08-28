@@ -3,8 +3,8 @@
 English | [中文](README.zh-CN.md)
 
 evolution-system is workflow-self-recursive's stateless Metric Result service. It
-resolves an `EvaluationSelection` against Evidence, binds the exact published
-Evaluation Catalog, and returns a `ResolvedEvaluationContext` receipt together
+resolves an `EvaluationSelection` against Evidence, binds the owner-approved
+Evaluation Catalog 2.0 review candidate, and returns a `ResolvedEvaluationContext` receipt together
 with authoritative Metric Results. Compare requests contain independent left and
 right selections; Evolution computes both sides and every compatible delta.
 
@@ -19,10 +19,18 @@ than responsibilities of this service baseline.
 
 ## Developer preview
 
-The current candidate exposes a closed, side-effect-free compute boundary and one
-isolated Python calculator slot for each of the 14 published metric coordinates.
-The slots do not yet implement metric formulas or traverse a live Evidence
-service. **Compatibility-breaking changes remain possible before publication.**
+The current candidate exposes a closed, side-effect-free compute boundary, an
+exact 12-coordinate registry, pure formulas for all 12 candidate metrics, and
+typed readers/resolvers for Task membership, Manifest projections, Facts, and
+recorded Trace nodes. Delivery, operational, Task, Role/model, Role-template,
+and exact reported-Usage calculator inputs fail closed on missing association.
+
+End-to-end compute orchestration and the physical projection of a Usage Event's
+native Span identity remain Wave 5 work. Until that exact call binding is exposed,
+call-scoped Usage availability/cost produces missing coverage; it is never joined
+by Delivery identity, timestamp, arrival order, or text. The 2.0 Catalog remains
+a review candidate, so **compatibility-breaking changes remain possible before
+publication.**
 
 ## Development
 
@@ -56,7 +64,7 @@ git clone https://github.com/firestige/evolution-system.git
 ## Documentation
 
 - [Evolution System design](https://github.com/firestige/workflow-self-recursive/blob/main/docs/systems/evolution/evolution-system.md)
-- [Metric Catalog](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evaluation/metric-catalog.md)
+- [Metric Catalog 2.0 review candidate](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evaluation/metric-catalog-2-candidate.md)
 - [Evidence Query Contract](https://github.com/firestige/workflow-self-recursive/blob/main/docs/contracts/evidence-query/evidence-query.md)
 
 ## License
