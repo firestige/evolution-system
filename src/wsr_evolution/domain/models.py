@@ -70,3 +70,18 @@ class TaskMetricUnit:
     classification: str
     covered: bool
     provenance_refs: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RoleModelTaskUnit:
+    task_id: str
+    provider: str
+    model: str
+    role: str
+    runtime: str
+    terminal_outcome: str
+    provenance_refs: tuple[str, ...]
+
+    @property
+    def cohort(self) -> tuple[str, str, str, str]:
+        return (self.provider, self.model, self.role, self.runtime)
