@@ -1,4 +1,4 @@
-FROM node:24.12.0-alpine3.23 AS workflow-checker
+FROM node:24.12.0-bookworm-slim@sha256:7326fb2dbdce998edd72140946851be64ef4a643e8715e138ca467e8e9d92c99 AS workflow-checker
 
 WORKDIR /checker
 COPY system-contracts/workflow-dsl-2-candidate/package.json \
@@ -6,22 +6,25 @@ COPY system-contracts/workflow-dsl-2-candidate/package.json \
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY system-contracts/workflow-dsl-2-candidate/generated ./generated
 
-FROM python:3.14.2-alpine3.23 AS build
+FROM ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa AS uv
+FROM python:3.14.6-slim-bookworm@sha256:4c92ffcde4dd6f1ff72a24518f49fd4990b27134987dfa31a733badde66df9f8 AS build
 
 WORKDIR /workspace/evolution-system
-RUN pip install --no-cache-dir uv==0.11.28
+COPY --from=uv /uv /uvx /bin/
 COPY evolution-system/pyproject.toml evolution-system/uv.lock evolution-system/README.md ./
 COPY evolution-system/src ./src
 RUN uv build --wheel --python 3.14 && \
     uv venv /opt/venv --python 3.14 && \
     uv pip install --python /opt/venv/bin/python dist/*.whl
 
-FROM python:3.14.2-alpine3.23
+FROM python:3.14.6-slim-bookworm@sha256:4c92ffcde4dd6f1ff72a24518f49fd4990b27134987dfa31a733badde66df9f8
+
+ARG WSR_RELEASE_REVISION=unbound
+LABEL org.opencontainers.image.source="https://github.com/firestige/evolution-system" \
+      org.opencontainers.image.revision=$WSR_RELEASE_REVISION
 
 WORKDIR /app
 COPY --from=workflow-checker /usr/local/bin/node /usr/local/bin/node
-COPY --from=workflow-checker /usr/lib/libstdc++.so.6 /usr/lib/libstdc++.so.6
-COPY --from=workflow-checker /usr/lib/libgcc_s.so.1 /usr/lib/libgcc_s.so.1
 COPY --from=workflow-checker /checker /opt/workflow-dsl
 COPY --from=build /opt/venv /opt/venv
 
