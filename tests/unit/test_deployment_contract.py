@@ -54,3 +54,35 @@ def test_reusable_release_does_not_confuse_caller_sha_with_product_commit() -> N
     assert "product_commit:" in workflow
     assert "PRODUCT_COMMIT: ${{ inputs.product_commit }}" in workflow
     assert "PRODUCT_COMMIT: ${{ github.sha }}" not in workflow
+
+
+def test_candidate_persists_exact_qualification_for_later_promotion() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
+
+    assert "release-qualification.json" in workflow
+    assert 'gh release create "$CANDIDATE_TAG"' in workflow
+    assert "--prerelease" in workflow
+    assert "actions/create-github-app-token@" in workflow
+    assert '"ociDigest":digest' in workflow
+    assert '"platforms":["linux/amd64","linux/arm64"]' in workflow
+    assert '"provenance":{"mode":"max","status":"PASS"}' in workflow
+    assert "evolution-system/release/validate_image_qualification.py" in workflow
+
+
+def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release-promote.yml").read_text()
+
+    assert "release-qualification.json" in workflow
+    assert "docker buildx build" not in workflow
+    assert ":latest" not in workflow
+    assert 'CANDIDATE_DIGEST="$(jq -er .ociDigest' in workflow
+    assert 'test "$REMOTE_DIGEST" = "$CANDIDATE_DIGEST"' in workflow
+    assert 'config.Labels["org.opencontainers.image.source"]' in workflow
+    assert 'config.Labels["org.opencontainers.image.revision"]' in workflow
+    assert 'index("amd64") != null and index("arm64") != null' in workflow
+    assert "--format '{{json .Provenance}}'" in workflow
+    assert "docker buildx imagetools create" in workflow
+    assert 'test "$STABLE_DIGEST" = "$CANDIDATE_DIGEST"' in workflow
+    assert "stable-qualification.json" in workflow
+    assert "actions/create-github-app-token@" in workflow
+    assert "release/validate_image_qualification.py" in workflow

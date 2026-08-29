@@ -1,0 +1,141 @@
+name: Promote qualified Evolution image candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Exact qualified prerelease tag
+        required: true
+        type: string
+      final_tag:
+        description: Exact stable version tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: evolution-release-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve exact candidate commit
+        id: candidate
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh release view "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true
+          echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_TAG" --jq .object.sha)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Download and validate durable candidate qualification
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          EXPECTED_COMMIT: ${{ steps.candidate.outputs.sha }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/qualified-release"
+          gh release download "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern release-qualification.json --dir "$RUNNER_TEMP/qualified-release"
+          QUALIFICATION="$RUNNER_TEMP/qualified-release/release-qualification.json"
+          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$FINAL_TAG" = "$VERSION"
+          python release/validate_image_qualification.py "$QUALIFICATION" \
+            --candidate-tag "$CANDIDATE_TAG" --final-tag "$FINAL_TAG" --commit "$EXPECTED_COMMIT" \
+            > "$RUNNER_TEMP/validated-qualification.json"
+          ! gh release view "$FINAL_TAG" --repo "$GITHUB_REPOSITORY"
+          ! git ls-remote --exit-code --tags origin "refs/tags/$FINAL_TAG"
+
+      - name: Requalify candidate image without rebuilding
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          EXPECTED_COMMIT: ${{ steps.candidate.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          QUALIFICATION="$RUNNER_TEMP/qualified-release/release-qualification.json"
+          CANDIDATE_DIGEST="$(jq -er .ociDigest "$QUALIFICATION")"
+          docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution:$CANDIDATE_TAG" \
+            --format '{{json .Manifest}}' > "$RUNNER_TEMP/candidate-manifest.json"
+          REMOTE_DIGEST="$(jq -er .digest "$RUNNER_TEMP/candidate-manifest.json")"
+          test "$REMOTE_DIGEST" = "$CANDIDATE_DIGEST"
+          docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$CANDIDATE_DIGEST" \
+            --format '{{json .Image}}' > "$RUNNER_TEMP/candidate-image.json"
+          test "$(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$RUNNER_TEMP/candidate-image.json")" = "https://github.com/firestige/evolution-system"
+          test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$RUNNER_TEMP/candidate-image.json")" = "$EXPECTED_COMMIT"
+          jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] |
+            (index("amd64") != null and index("arm64") != null)' \
+            "$RUNNER_TEMP/candidate-manifest.json" >/dev/null
+          docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$CANDIDATE_DIGEST" \
+            --format '{{json .Provenance}}' > "$RUNNER_TEMP/candidate-provenance.json"
+          AUTHORITY_REVISION="$(jq -er .authority.revision "$QUALIFICATION")"
+          jq -e --arg revision "$AUTHORITY_REVISION" '
+            .SLSA.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md" and
+            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:source"] == "https://github.com/firestige/workflow-self-recursive" and
+            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:revision"] == $revision
+          ' "$RUNNER_TEMP/candidate-provenance.json" >/dev/null
+
+      - name: Attach stable tag to the exact candidate digest
+        env:
+          FINAL_TAG: ${{ inputs.final_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CANDIDATE_DIGEST="$(jq -er .ociDigest "$RUNNER_TEMP/qualified-release/release-qualification.json")"
+          STABLE_IMAGE="ghcr.io/firestige/wsr-evolution:$FINAL_TAG"
+          if docker buildx imagetools inspect "$STABLE_IMAGE" --format '{{json .Manifest}}' > "$RUNNER_TEMP/stable-before.json" 2>/dev/null; then
+            test "$(jq -er .digest "$RUNNER_TEMP/stable-before.json")" = "$CANDIDATE_DIGEST"
+          else
+            docker buildx imagetools create \
+              --tag "$STABLE_IMAGE" \
+              "ghcr.io/firestige/wsr-evolution@$CANDIDATE_DIGEST"
+          fi
+          docker buildx imagetools inspect "$STABLE_IMAGE" --format '{{json .Manifest}}' > "$RUNNER_TEMP/stable-after.json"
+          STABLE_DIGEST="$(jq -er .digest "$RUNNER_TEMP/stable-after.json")"
+          test "$STABLE_DIGEST" = "$CANDIDATE_DIGEST"
+
+      - name: Build stable qualification metadata
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          FINAL_TAG: ${{ inputs.final_tag }}
+          EXPECTED_COMMIT: ${{ steps.candidate.outputs.sha }}
+        run: |
+          QUALIFICATION="$RUNNER_TEMP/qualified-release/release-qualification.json"
+          QUALIFICATION_SHA="sha256:$(sha256sum "$QUALIFICATION" | cut -d' ' -f1)"
+          OCI_DIGEST="$(jq -er .ociDigest "$QUALIFICATION")"
+          export CANDIDATE_TAG FINAL_TAG EXPECTED_COMMIT QUALIFICATION_SHA OCI_DIGEST
+          python -c 'import json,os,pathlib; q={"schemaVersion":"wsr.evolution-image-promotion@1.0.0","finalTag":os.environ["FINAL_TAG"],"promotedFrom":os.environ["CANDIDATE_TAG"],"commit":os.environ["EXPECTED_COMMIT"],"sourceQualificationSha256":os.environ["QUALIFICATION_SHA"],"image":"ghcr.io/firestige/wsr-evolution:"+os.environ["FINAL_TAG"]+"@"+os.environ["OCI_DIGEST"],"ociDigest":os.environ["OCI_DIGEST"],"validation":{"candidateDigest":"PASS","imageIdentity":"PASS","platforms":"PASS","provenance":"PASS","stableDigest":"PASS"}}; pathlib.Path(os.environ["RUNNER_TEMP"],"qualified-release","stable-qualification.json").write_text(json.dumps(q,indent=2)+"\n")'
+
+      - name: Mint short-lived release App token for final metadata publication
+        id: release-app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSR_RELEASE_APP_ID }}
+          private-key: ${{ secrets.WSR_RELEASE_APP_PRIVATE_KEY }}
+          owner: firestige
+          repositories: evolution-system
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Create stable tag and Release as the last operation
+        env:
+          FINAL_TAG: ${{ inputs.final_tag }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+        run: |
+          gh release create "$FINAL_TAG" --repo "$GITHUB_REPOSITORY" \
+            "$RUNNER_TEMP/qualified-release/release-qualification.json" \
+            "$RUNNER_TEMP/qualified-release/stable-qualification.json" \
+            --target "${{ steps.candidate.outputs.sha }}"
