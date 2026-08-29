@@ -167,8 +167,24 @@ class WorkflowSourceResolver:
             raise ValueError("Workflow source implementations must exactly match configuration")
         self._configuration = configuration
         self._sources = dict(sources)
+        self._validated_cache: dict[
+            tuple[object, ...], tuple[str, int, str, WorkflowCandidate]
+        ] = {}
 
     async def resolve(self, manifest: DeliveryManifestReading) -> WorkflowResolution:
+        cache_key = _exact_content_coordinate(manifest)
+        cached = self._validated_cache.get(cache_key)
+        if cached is not None:
+            source_id, source_index, repository, candidate = cached
+            return WorkflowResolution(
+                state="AVAILABLE",
+                manifest_digest=manifest.manifest_digest,
+                attempts=(),
+                matched_source_id=source_id,
+                matched_source_index=source_index,
+                matched_repository=repository,
+                candidate=candidate,
+            )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._configuration.total_deadline_seconds
         attempts: list[ResolutionAttempt] = []
@@ -208,6 +224,12 @@ class WorkflowSourceResolver:
             if mismatch is not None:
                 attempts.append(ResolutionAttempt(configured.source_id, index, mismatch))
                 continue
+            self._validated_cache[cache_key] = (
+                configured.source_id,
+                index,
+                configured.repository,
+                candidate,
+            )
             return WorkflowResolution(
                 state="AVAILABLE",
                 manifest_digest=manifest.manifest_digest,
@@ -226,6 +248,23 @@ class WorkflowSourceResolver:
             manifest_digest=manifest.manifest_digest,
             attempts=bounded,
         )
+
+
+def _exact_content_coordinate(manifest: DeliveryManifestReading) -> tuple[object, ...]:
+    workflow = manifest.workflow
+    return (
+        workflow.package_name,
+        workflow.exact_package_version,
+        workflow.package_digest,
+        workflow.workflow_id,
+        workflow.workflow_version,
+        workflow.snapshot_id,
+        workflow.snapshot_digest,
+        tuple(
+            (role.role_id, role.role_prompt_identity, role.role_prompt_digest)
+            for role in manifest.roles
+        ),
+    )
 
 
 def _bounded_attempts(attempts: list[ResolutionAttempt]) -> tuple[ResolutionAttempt, ...]:

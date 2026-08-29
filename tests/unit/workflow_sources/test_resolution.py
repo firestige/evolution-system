@@ -158,6 +158,33 @@ async def test_resolver_distinguishes_proven_absence_from_indeterminate_failure(
     assert (await unavailable.resolve(manifest())).state == "UNAVAILABLE"
 
 
+@pytest.mark.asyncio
+async def test_validated_cache_is_keyed_by_exact_content_and_never_substitutes() -> None:
+    exact = candidate()
+    source = StubSource([exact, exact, exact])
+    resolver = WorkflowSourceResolver(
+        WorkflowResolutionConfig(
+            sources=(WorkflowSourceConfig("official", "firestige/workflow-package"),)
+        ),
+        {"official": source},
+    )
+
+    first = await resolver.resolve(manifest())
+    second = await resolver.resolve(manifest())
+    changed = replace(
+        manifest(),
+        manifest_digest="9" * 64,
+        workflow=replace(manifest().workflow, package_digest=f"sha256:{'8' * 64}"),
+    )
+    third = await resolver.resolve(changed)
+
+    assert first.state == second.state == "AVAILABLE"
+    assert second.manifest_digest == manifest().manifest_digest
+    assert third.state == "NOT_FOUND"
+    assert [item.code for item in third.attempts] == ["PACKAGE_DIGEST_MISMATCH"]
+    assert len(source.calls) == 2
+
+
 @pytest.mark.parametrize(
     "sources",
     [
