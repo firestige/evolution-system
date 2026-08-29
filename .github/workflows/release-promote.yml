@@ -64,6 +64,7 @@ jobs:
         env:
           CANDIDATE_TAG: ${{ inputs.candidate_tag }}
           EXPECTED_COMMIT: ${{ steps.candidate.outputs.sha }}
+          FINAL_TAG: ${{ inputs.final_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -82,12 +83,9 @@ jobs:
             "$RUNNER_TEMP/candidate-manifest.json" >/dev/null
           docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$CANDIDATE_DIGEST" \
             --format '{{json .Provenance}}' > "$RUNNER_TEMP/candidate-provenance.json"
-          AUTHORITY_REVISION="$(jq -er .authority.revision "$QUALIFICATION")"
-          jq -e --arg revision "$AUTHORITY_REVISION" '
-            .SLSA.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md" and
-            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:source"] == "https://github.com/firestige/workflow-self-recursive" and
-            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:revision"] == $revision
-          ' "$RUNNER_TEMP/candidate-provenance.json" >/dev/null
+          python release/validate_image_qualification.py "$QUALIFICATION" \
+            --candidate-tag "$CANDIDATE_TAG" --final-tag "$FINAL_TAG" --commit "$EXPECTED_COMMIT" \
+            --provenance "$RUNNER_TEMP/candidate-provenance.json" >/dev/null
 
       - name: Attach stable tag to the exact candidate digest
         env:

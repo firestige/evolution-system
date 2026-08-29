@@ -86,7 +86,6 @@ jobs:
       - name: Resolve or publish immutable candidate image
         id: image
         env:
-          AUTHORITY_REF: ${{ inputs.authority_ref }}
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_TAG: ${{ inputs.candidate_tag }}
           PRODUCT_COMMIT: ${{ inputs.product_commit }}
@@ -122,11 +121,6 @@ jobs:
             "$RUNNER_TEMP/qualified-image-manifest.json" >/dev/null
           docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$DIGEST" \
             --format '{{json .Provenance}}' > "$RUNNER_TEMP/provenance.json"
-          jq -e --arg revision "$AUTHORITY_REF" '
-            .SLSA.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md" and
-            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:source"] == "https://github.com/firestige/workflow-self-recursive" and
-            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:revision"] == $revision
-          ' "$RUNNER_TEMP/provenance.json" >/dev/null
           echo "coordinate=ghcr.io/firestige/wsr-evolution:$CANDIDATE_TAG@$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Build durable candidate qualification metadata
@@ -142,7 +136,8 @@ jobs:
           python -c 'import json,os,pathlib; coordinate=os.environ["DIGEST_COORDINATE"]; digest=coordinate.rsplit("@",1)[1]; q={"schemaVersion":"wsr.evolution-image-qualification@1.0.0","candidateTag":os.environ["CANDIDATE_TAG"],"version":os.environ["VERSION"],"commit":os.environ["PRODUCT_COMMIT"],"authority":{"repository":"firestige/workflow-self-recursive","revision":os.environ["AUTHORITY_REF"]},"publisherRevision":os.environ["PUBLISHER_REVISION"],"image":coordinate,"ociDigest":digest,"source":"https://github.com/firestige/evolution-system","platforms":["linux/amd64","linux/arm64"],"provenance":{"mode":"max","status":"PASS"},"sbom":{"requested":True}}; pathlib.Path(os.environ["RUNNER_TEMP"],"release-qualification.json").write_text(json.dumps(q,indent=2)+"\n")'
           python evolution-system/release/validate_image_qualification.py \
             "$RUNNER_TEMP/release-qualification.json" \
-            --candidate-tag "$CANDIDATE_TAG" --final-tag "$VERSION" --commit "$PRODUCT_COMMIT" >/dev/null
+            --candidate-tag "$CANDIDATE_TAG" --final-tag "$VERSION" --commit "$PRODUCT_COMMIT" \
+            --provenance "$RUNNER_TEMP/provenance.json" >/dev/null
 
       - name: Mint short-lived release App token after qualification
         id: release-app-token

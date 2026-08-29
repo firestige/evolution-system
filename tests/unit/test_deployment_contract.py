@@ -67,6 +67,8 @@ def test_candidate_persists_exact_qualification_for_later_promotion() -> None:
     assert '"platforms":["linux/amd64","linux/arm64"]' in workflow
     assert '"provenance":{"mode":"max","status":"PASS"}' in workflow
     assert "evolution-system/release/validate_image_qualification.py" in workflow
+    assert '--provenance "$RUNNER_TEMP/provenance.json"' in workflow
+    assert ".SLSA.buildDefinition" not in workflow
 
 
 def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> None:
@@ -86,3 +88,5 @@ def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> 
     assert "stable-qualification.json" in workflow
     assert "actions/create-github-app-token@" in workflow
     assert "release/validate_image_qualification.py" in workflow
+    assert '--provenance "$RUNNER_TEMP/candidate-provenance.json"' in workflow
+    assert ".SLSA.buildDefinition" not in workflow
