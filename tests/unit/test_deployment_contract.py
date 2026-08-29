@@ -65,7 +65,7 @@ def test_candidate_persists_exact_qualification_for_later_promotion() -> None:
     assert '"ociDigest":digest' in workflow
     assert '"platforms":["linux/amd64","linux/arm64"]' in workflow
     assert '"provenance":{"mode":"max","status":"PASS"}' in workflow
-    assert "evolution-system/release/validate_image_qualification.py" in workflow
+    assert "release-publisher/release/validate_image_qualification.py" in workflow
     assert '--provenance "$RUNNER_TEMP/provenance.json"' in workflow
     assert '--image-config "$RUNNER_TEMP/qualified-image-config.json"' in workflow
     assert ".SLSA.buildDefinition" not in workflow
@@ -86,7 +86,25 @@ def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> 
     assert 'test "$STABLE_DIGEST" = "$CANDIDATE_DIGEST"' in workflow
     assert "stable-qualification.json" in workflow
     assert "actions/create-github-app-token@" in workflow
-    assert "release/validate_image_qualification.py" in workflow
+    assert "release-publisher/release/validate_image_qualification.py" in workflow
     assert '--provenance "$RUNNER_TEMP/candidate-provenance.json"' in workflow
     assert '--image-config "$RUNNER_TEMP/candidate-image.json"' in workflow
     assert ".SLSA.buildDefinition" not in workflow
+
+
+def test_release_workflows_use_validator_from_exact_publisher_revision() -> None:
+    candidate = (ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
+    promote = (ROOT / ".github" / "workflows" / "release-promote.yml").read_text()
+
+    for workflow in (candidate, promote):
+        assert "repository: firestige/evolution-system" in workflow
+        assert "ref: ${{ github.workflow_sha }}" in workflow
+        assert "path: release-publisher" in workflow
+        assert "PUBLISHER_REVISION: ${{ github.workflow_sha }}" in workflow
+        assert 'git -C release-publisher rev-parse HEAD)" = "$PUBLISHER_REVISION"' in workflow
+        assert "python release-publisher/release/validate_image_qualification.py" in workflow
+
+    assert "python evolution-system/release/validate_image_qualification.py" not in candidate
+    assert "python release/validate_image_qualification.py" not in promote
+    assert 'git -C evolution-system rev-parse HEAD)" = "$PRODUCT_COMMIT"' in candidate
+    assert 'git rev-parse HEAD)" = "$EXPECTED_COMMIT"' in promote
