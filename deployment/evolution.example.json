@@ -4,7 +4,7 @@
   "workflow_sources": [
     {
       "source_id": "official",
-      "repository": "firestige/workflow-package"
+      "repository": "firestige/wsr-workflow-package"
     }
   ],
   "limits": {

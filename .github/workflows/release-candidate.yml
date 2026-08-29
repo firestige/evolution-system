@@ -84,7 +84,7 @@ jobs:
       - name: Checkout exact publisher tooling revision
         uses: actions/checkout@v6
         with:
-          repository: firestige/evolution-system
+          repository: firestige/wsr-evolution
           ref: ${{ github.workflow_sha }}
           path: release-publisher
 
@@ -140,7 +140,7 @@ jobs:
           VERSION: ${{ steps.candidate.outputs.version }}
         run: |
           export AUTHORITY_REF CANDIDATE_TAG DIGEST_COORDINATE PRODUCT_COMMIT PUBLISHER_REVISION VERSION
-          python -c 'import json,os,pathlib; coordinate=os.environ["DIGEST_COORDINATE"]; digest=coordinate.rsplit("@",1)[1]; q={"schemaVersion":"wsr.evolution-image-qualification@1.0.0","candidateTag":os.environ["CANDIDATE_TAG"],"version":os.environ["VERSION"],"commit":os.environ["PRODUCT_COMMIT"],"authority":{"repository":"firestige/workflow-self-recursive","revision":os.environ["AUTHORITY_REF"]},"publisherRevision":os.environ["PUBLISHER_REVISION"],"image":coordinate,"ociDigest":digest,"source":"https://github.com/firestige/evolution-system","platforms":["linux/amd64","linux/arm64"],"provenance":{"mode":"max","status":"PASS"},"sbom":{"requested":True}}; pathlib.Path(os.environ["RUNNER_TEMP"],"release-qualification.json").write_text(json.dumps(q,indent=2)+"\n")'
+          python -c 'import json,os,pathlib; coordinate=os.environ["DIGEST_COORDINATE"]; digest=coordinate.rsplit("@",1)[1]; q={"schemaVersion":"wsr.evolution-image-qualification@1.0.0","candidateTag":os.environ["CANDIDATE_TAG"],"version":os.environ["VERSION"],"commit":os.environ["PRODUCT_COMMIT"],"authority":{"repository":"firestige/workflow-self-recursive","revision":os.environ["AUTHORITY_REF"]},"publisherRevision":os.environ["PUBLISHER_REVISION"],"image":coordinate,"ociDigest":digest,"source":"https://github.com/firestige/wsr-evolution","platforms":["linux/amd64","linux/arm64"],"provenance":{"mode":"max","status":"PASS"},"sbom":{"requested":True}}; pathlib.Path(os.environ["RUNNER_TEMP"],"release-qualification.json").write_text(json.dumps(q,indent=2)+"\n")'
           python release-publisher/release/validate_image_qualification.py \
             "$RUNNER_TEMP/release-qualification.json" \
             --candidate-tag "$CANDIDATE_TAG" --final-tag "$VERSION" --commit "$PRODUCT_COMMIT" \
@@ -154,7 +154,7 @@ jobs:
           app-id: ${{ vars.WSR_RELEASE_APP_ID }}
           private-key: ${{ secrets.WSR_RELEASE_APP_PRIVATE_KEY }}
           owner: firestige
-          repositories: evolution-system
+          repositories: wsr-evolution
           permission-contents: write
           permission-workflows: write
 

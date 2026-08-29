@@ -97,7 +97,7 @@ def test_release_workflows_use_validator_from_exact_publisher_revision() -> None
     promote = (ROOT / ".github" / "workflows" / "release-promote.yml").read_text()
 
     for workflow in (candidate, promote):
-        assert "repository: firestige/evolution-system" in workflow
+        assert "repository: firestige/wsr-evolution" in workflow
         assert "ref: ${{ github.workflow_sha }}" in workflow
         assert "path: release-publisher" in workflow
         assert "PUBLISHER_REVISION: ${{ github.workflow_sha }}" in workflow

@@ -30,7 +30,7 @@ def qualification() -> dict[str, object]:
         "publisherRevision": PUBLISHER,
         "image": f"ghcr.io/firestige/wsr-evolution:0.1.0-rc.1@{DIGEST}",
         "ociDigest": DIGEST,
-        "source": "https://github.com/firestige/evolution-system",
+        "source": "https://github.com/firestige/wsr-evolution",
         "platforms": ["linux/amd64", "linux/arm64"],
         "provenance": {"mode": "max", "status": "PASS"},
         "sbom": {"requested": True},

@@ -44,7 +44,7 @@ per side, 20 pages per traversal, 100,000 Fact-plus-Trace records per side, and 
 is silently truncated. The 2.0 Catalog remains a review candidate, so
 **compatibility-breaking changes remain possible before publication.**
 
-Historical Workflow enrichment resolves only the exact Package and Snapshot coordinates already recorded by Evidence, using the configured ordered public GitHub sources. The reference coordinate is `firestige/workflow-package`. A validated in-process cache is keyed by the complete Package/Workflow/Snapshot/Role content coordinate; it is never Evidence authority and never substitutes stale, compatible, latest, branch, or local checkout content. Enrichment failure remains diagnostic and cannot rewrite a Metric Result.
+Historical Workflow enrichment resolves only the exact Package and Snapshot coordinates already recorded by Evidence, using the configured ordered public GitHub sources. The reference coordinate is `firestige/wsr-workflow-package`. A validated in-process cache is keyed by the complete Package/Workflow/Snapshot/Role content coordinate; it is never Evidence authority and never substitutes stale, compatible, latest, branch, or local checkout content. Enrichment failure remains diagnostic and cannot rewrite a Metric Result.
 
 ## Development
 
@@ -86,7 +86,7 @@ git clone --recurse-submodules https://github.com/firestige/workflow-self-recurs
 To clone it standalone:
 
 ```sh
-git clone https://github.com/firestige/evolution-system.git
+git clone https://github.com/firestige/wsr-evolution.git
 ```
 
 ## Documentation

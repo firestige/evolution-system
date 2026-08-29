@@ -42,7 +42,7 @@ jobs:
       - name: Checkout exact publisher tooling revision
         uses: actions/checkout@v6
         with:
-          repository: firestige/evolution-system
+          repository: firestige/wsr-evolution
           ref: ${{ github.workflow_sha }}
           path: release-publisher
 
@@ -138,7 +138,7 @@ jobs:
           app-id: ${{ vars.WSR_RELEASE_APP_ID }}
           private-key: ${{ secrets.WSR_RELEASE_APP_PRIVATE_KEY }}
           owner: firestige
-          repositories: evolution-system
+          repositories: wsr-evolution
           permission-contents: write
           permission-workflows: write
 
