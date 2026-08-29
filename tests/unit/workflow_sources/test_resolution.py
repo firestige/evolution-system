@@ -164,7 +164,7 @@ async def test_validated_cache_is_keyed_by_exact_content_and_never_substitutes()
     source = StubSource([exact, exact, exact])
     resolver = WorkflowSourceResolver(
         WorkflowResolutionConfig(
-            sources=(WorkflowSourceConfig("official", "firestige/workflow-package"),)
+            sources=(WorkflowSourceConfig("official", "firestige/wsr-workflow-package"),)
         ),
         {"official": source},
     )

@@ -11,7 +11,9 @@ def valid_configuration() -> dict[str, object]:
     return {
         "schema_version": "evolution.runtime@1.0.0",
         "evidence_base_url": "http://evidence:4318",
-        "workflow_sources": [{"source_id": "official", "repository": "firestige/workflow-package"}],
+        "workflow_sources": [
+            {"source_id": "official", "repository": "firestige/wsr-workflow-package"}
+        ],
         "limits": {
             "max_deliveries_per_side": 500,
             "max_pages_per_traversal": 20,

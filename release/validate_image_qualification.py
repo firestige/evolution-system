@@ -51,7 +51,7 @@ def validate(
         or value.get("candidateTag") != candidate_tag
         or COMMIT.fullmatch(commit) is None
         or value.get("commit") != commit
-        or value.get("source") != "https://github.com/firestige/evolution-system"
+        or value.get("source") != "https://github.com/firestige/wsr-evolution"
         or value.get("platforms") != ["linux/amd64", "linux/arm64"]
         or provenance != {"mode": "max", "status": "PASS"}
         or sbom != {"requested": True}
@@ -98,7 +98,7 @@ def validate_image_config(value: dict[str, Any], *, product_commit: str) -> None
             labels = value[platform]["config"]["Labels"]
             if (
                 labels["org.opencontainers.image.source"]
-                != "https://github.com/firestige/evolution-system"
+                != "https://github.com/firestige/wsr-evolution"
                 or labels["org.opencontainers.image.revision"] != product_commit
             ):
                 raise QualificationError("EVOLUTION_IMAGE_CONFIG_INVALID")

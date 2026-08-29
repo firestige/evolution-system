@@ -35,7 +35,7 @@ Resolution safety limit 全部可配置。默认每 side 500 个 unique Delivery
 页、每 side 100,000 条 Fact+Trace record、side deadline 120 秒。超过边界会显式令该 side
 失败，绝不静默截断。2.0 Catalog 仍是 review candidate，**正式发布前仍可能发生破坏兼容性的变更。**
 
-历史 Workflow enrichment 只解析 Evidence 已记录的确定 Package 与 Snapshot 坐标，并按配置顺序读取 public GitHub source；参考坐标为 `firestige/workflow-package`。通过校验的进程内 cache 以完整 Package/Workflow/Snapshot/Role 内容坐标为 key；它不是 Evidence authority，也不会用 stale、compatible、latest、branch 或本地 checkout 内容替代。Enrichment 失败只形成诊断，不能改写 Metric Result。
+历史 Workflow enrichment 只解析 Evidence 已记录的确定 Package 与 Snapshot 坐标，并按配置顺序读取 public GitHub source；参考坐标为 `firestige/wsr-workflow-package`。通过校验的进程内 cache 以完整 Package/Workflow/Snapshot/Role 内容坐标为 key；它不是 Evidence authority，也不会用 stale、compatible、latest、branch 或本地 checkout 内容替代。Enrichment 失败只形成诊断，不能改写 Metric Result。
 
 ## 开发
 
@@ -77,7 +77,7 @@ git clone --recurse-submodules https://github.com/firestige/workflow-self-recurs
 单独克隆：
 
 ```sh
-git clone https://github.com/firestige/evolution-system.git
+git clone https://github.com/firestige/wsr-evolution.git
 ```
 
 ## 文档

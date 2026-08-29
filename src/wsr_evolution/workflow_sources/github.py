@@ -185,7 +185,7 @@ def _descriptor(
         or provenance["name"] != provenance_name
         or not digest_pattern(provenance["sha256"])
         or contract is None
-        or contract["repository"] != "firestige/system-contracts"
+        or contract["repository"] != "firestige/wsr-contracts"
         or not isinstance(contract["revision"], str)
         or len(contract["revision"]) != 40
         or not all(character in "0123456789abcdef" for character in contract["revision"])
@@ -231,7 +231,7 @@ def _valid_provenance(
         and len(source["revision"]) == 40
         and all(character in "0123456789abcdef" for character in source["revision"])
         and contract is not None
-        and contract["repository"] == "firestige/system-contracts"
+        and contract["repository"] == "firestige/wsr-contracts"
         and contract["revision"] == contract_revision
         and builder is not None
         and builder["workflow"] == ".github/workflows/release-candidate.yml"
