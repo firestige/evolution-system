@@ -1,0 +1,174 @@
+name: Evolution image release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: RC image tag, for example 0.1.0-rc.1
+        required: true
+        type: string
+      authority_ref:
+        description: Exact superproject ref containing this Evolution commit and its Workflow checker
+        required: true
+        type: string
+      product_commit:
+        description: Exact Evolution commit pinned by the superproject authority
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      candidate_tag:
+        required: true
+        type: string
+      authority_ref:
+        required: true
+        type: string
+      product_commit:
+        required: true
+        type: string
+    outputs:
+      image:
+        description: Immutable qualified OCI coordinate
+        value: ${{ jobs.qualify-and-publish.outputs.image }}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: evolution-release-candidate
+  cancel-in-progress: false
+
+jobs:
+  qualify-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      image: ${{ steps.image.outputs.coordinate }}
+    steps:
+      - name: Checkout exact superproject authority
+        uses: actions/checkout@v6
+        with:
+          repository: firestige/workflow-self-recursive
+          ref: ${{ inputs.authority_ref }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify exact Evolution product and candidate coordinate
+        id: candidate
+        env:
+          AUTHORITY_REF: ${{ inputs.authority_ref }}
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+        run: |
+          test "$(git -C evolution-system rev-parse HEAD)" = "$PRODUCT_COMMIT"
+          case "$PRODUCT_COMMIT" in ????????????????????????????????????????) ;; *) exit 1 ;; esac
+          case "$AUTHORITY_REF" in ????????????????????????????????????????) ;; *) exit 1 ;; esac
+          test "$(git rev-parse HEAD)" = "$AUTHORITY_REF"
+          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("evolution-system/pyproject.toml", "rb"))["project"]["version"])')"
+          export CANDIDATE_TAG VERSION
+          python -c 'import os,re; assert re.fullmatch(re.escape(os.environ["VERSION"])+r"-rc\.[1-9]\d*",os.environ["CANDIDATE_TAG"])'
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            test "$(gh release view "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_TAG" --jq .object.sha)" = "$PRODUCT_COMMIT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_TAG" >/dev/null 2>&1; then
+              test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_TAG" --jq .object.sha)" = "$PRODUCT_COMMIT"
+            fi
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Resolve or publish immutable candidate image
+        id: image
+        env:
+          AUTHORITY_REF: ${{ inputs.authority_ref }}
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          IMAGE="ghcr.io/firestige/wsr-evolution:$CANDIDATE_TAG"
+          if docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' > "$RUNNER_TEMP/manifest.json" 2>/dev/null; then
+            docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}' > "$RUNNER_TEMP/image-config.json"
+            test "$(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$RUNNER_TEMP/image-config.json")" = "https://github.com/firestige/evolution-system"
+            test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$RUNNER_TEMP/image-config.json")" = "$PRODUCT_COMMIT"
+            DIGEST="$(jq -er .digest "$RUNNER_TEMP/manifest.json")"
+          else
+            docker buildx build --push \
+              --platform linux/amd64,linux/arm64 \
+              --provenance=mode=max \
+              --sbom=true \
+              --tag "$IMAGE" \
+              --build-arg "WSR_RELEASE_REVISION=$PRODUCT_COMMIT" \
+              --metadata-file "$RUNNER_TEMP/image-metadata.json" \
+              --file evolution-system/Dockerfile \
+              .
+            DIGEST="$(jq -er '.["containerimage.digest"]' "$RUNNER_TEMP/image-metadata.json")"
+          fi
+          case "$DIGEST" in sha256:????????????????????????????????????????????????????????????????) ;; *) exit 1 ;; esac
+          docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$DIGEST" \
+            --format '{{json .Manifest}}' > "$RUNNER_TEMP/qualified-image-manifest.json"
+          docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$DIGEST" \
+            --format '{{json .Image}}' > "$RUNNER_TEMP/qualified-image-config.json"
+          test "$(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$RUNNER_TEMP/qualified-image-config.json")" = "https://github.com/firestige/evolution-system"
+          test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$RUNNER_TEMP/qualified-image-config.json")" = "$PRODUCT_COMMIT"
+          jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] |
+            (index("amd64") != null and index("arm64") != null)' \
+            "$RUNNER_TEMP/qualified-image-manifest.json" >/dev/null
+          docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$DIGEST" \
+            --format '{{json .Provenance}}' > "$RUNNER_TEMP/provenance.json"
+          jq -e --arg revision "$AUTHORITY_REF" '
+            .SLSA.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md" and
+            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:source"] == "https://github.com/firestige/workflow-self-recursive" and
+            .SLSA.buildDefinition.externalParameters.request.root.configSource.request.args["vcs:revision"] == $revision
+          ' "$RUNNER_TEMP/provenance.json" >/dev/null
+          echo "coordinate=ghcr.io/firestige/wsr-evolution:$CANDIDATE_TAG@$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Build durable candidate qualification metadata
+        env:
+          AUTHORITY_REF: ${{ inputs.authority_ref }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          DIGEST_COORDINATE: ${{ steps.image.outputs.coordinate }}
+          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+          PUBLISHER_REVISION: ${{ github.workflow_sha }}
+          VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          export AUTHORITY_REF CANDIDATE_TAG DIGEST_COORDINATE PRODUCT_COMMIT PUBLISHER_REVISION VERSION
+          python -c 'import json,os,pathlib; coordinate=os.environ["DIGEST_COORDINATE"]; digest=coordinate.rsplit("@",1)[1]; q={"schemaVersion":"wsr.evolution-image-qualification@1.0.0","candidateTag":os.environ["CANDIDATE_TAG"],"version":os.environ["VERSION"],"commit":os.environ["PRODUCT_COMMIT"],"authority":{"repository":"firestige/workflow-self-recursive","revision":os.environ["AUTHORITY_REF"]},"publisherRevision":os.environ["PUBLISHER_REVISION"],"image":coordinate,"ociDigest":digest,"source":"https://github.com/firestige/evolution-system","platforms":["linux/amd64","linux/arm64"],"provenance":{"mode":"max","status":"PASS"},"sbom":{"requested":True}}; pathlib.Path(os.environ["RUNNER_TEMP"],"release-qualification.json").write_text(json.dumps(q,indent=2)+"\n")'
+          python evolution-system/release/validate_image_qualification.py \
+            "$RUNNER_TEMP/release-qualification.json" \
+            --candidate-tag "$CANDIDATE_TAG" --final-tag "$VERSION" --commit "$PRODUCT_COMMIT" >/dev/null
+
+      - name: Mint short-lived release App token after qualification
+        id: release-app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSR_RELEASE_APP_ID }}
+          private-key: ${{ secrets.WSR_RELEASE_APP_PRIVATE_KEY }}
+          owner: firestige
+          repositories: evolution-system
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Create or resume exact candidate Release
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+          RELEASE_EXISTS: ${{ steps.candidate.outputs.exists }}
+        run: |
+          if test "$RELEASE_EXISTS" != true; then
+            gh release create "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$PRODUCT_COMMIT"
+          fi
+          if gh release view "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq release-qualification.json; then
+            mkdir "$RUNNER_TEMP/existing-qualification"
+            gh release download "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" --pattern release-qualification.json --dir "$RUNNER_TEMP/existing-qualification"
+            cmp "$RUNNER_TEMP/release-qualification.json" "$RUNNER_TEMP/existing-qualification/release-qualification.json"
+          else
+            gh release upload "$CANDIDATE_TAG" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP/release-qualification.json"
+          fi
