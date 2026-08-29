@@ -10,6 +10,7 @@ from typing import cast
 ROOT = Path(__file__).parents[2]
 VALIDATOR = ROOT / "release" / "validate_image_qualification.py"
 PROVENANCE = ROOT / "tests" / "fixtures" / "release" / "platform-provenance.json"
+IMAGE_CONFIG = ROOT / "tests" / "fixtures" / "release" / "platform-image.json"
 COMMIT = "a" * 40
 AUTHORITY = "b" * 40
 PUBLISHER = "c" * 40
@@ -40,6 +41,7 @@ def invoke(
     tmp_path: Path,
     value: dict[str, object],
     provenance: dict[str, object] | None = None,
+    image_config: dict[str, object] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     source = tmp_path / "release-qualification.json"
     source.write_text(json.dumps(value), encoding="utf-8")
@@ -58,6 +60,10 @@ def invoke(
         provenance_path = tmp_path / "provenance.json"
         provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
         arguments.extend(["--provenance", str(provenance_path)])
+    if image_config is not None:
+        image_path = tmp_path / "image.json"
+        image_path.write_text(json.dumps(image_config), encoding="utf-8")
+        arguments.extend(["--image-config", str(image_path)])
     return subprocess.run(
         arguments,
         capture_output=True,
@@ -101,6 +107,12 @@ def platform_provenance() -> dict[str, object]:
     return value
 
 
+def platform_image() -> dict[str, object]:
+    value = json.loads(IMAGE_CONFIG.read_text(encoding="utf-8"))
+    assert isinstance(value, dict)
+    return value
+
+
 def provenance_arguments(value: dict[str, object], platform: str) -> dict[str, str]:
     current: object = value[platform]
     for key in (
@@ -119,7 +131,7 @@ def provenance_arguments(value: dict[str, object], platform: str) -> dict[str, s
 
 
 def test_platform_keyed_provenance_accepts_both_required_platforms(tmp_path: Path) -> None:
-    completed = invoke(tmp_path, qualification(), platform_provenance())
+    completed = invoke(tmp_path, qualification(), platform_provenance(), platform_image())
 
     assert completed.returncode == 0
 
@@ -150,5 +162,46 @@ def test_platform_keyed_provenance_rejects_missing_or_mismatched_attestation(
     for name, mutate in mutations.items():
         value = platform_provenance()
         mutate(value)
-        completed = invoke(tmp_path, qualification(), value)
+        completed = invoke(tmp_path, qualification(), value, platform_image())
+        assert completed.returncode != 0, name
+
+
+def test_platform_keyed_image_accepts_both_required_platform_labels(tmp_path: Path) -> None:
+    completed = invoke(tmp_path, qualification(), platform_provenance(), platform_image())
+
+    assert completed.returncode == 0
+
+
+def test_platform_keyed_image_rejects_missing_or_mismatched_platform_labels(
+    tmp_path: Path,
+) -> None:
+    def labels(value: dict[str, object], platform: str) -> dict[str, str]:
+        selected = value[platform]
+        assert isinstance(selected, dict)
+        config = selected["config"]
+        assert isinstance(config, dict)
+        found = config["Labels"]
+        assert isinstance(found, dict)
+        return cast(dict[str, str], found)
+
+    def remove_arm64(value: dict[str, object]) -> None:
+        value.pop("linux/arm64")
+
+    def mismatch_source(value: dict[str, object]) -> None:
+        labels(value, "linux/amd64")["org.opencontainers.image.source"] = (
+            "https://example.invalid/untrusted"
+        )
+
+    def mismatch_revision(value: dict[str, object]) -> None:
+        labels(value, "linux/arm64")["org.opencontainers.image.revision"] = "e" * 40
+
+    mutations: dict[str, Callable[[dict[str, object]], None]] = {
+        "missing-arm64": remove_arm64,
+        "mismatched-source": mismatch_source,
+        "mismatched-revision": mismatch_revision,
+    }
+    for name, mutate in mutations.items():
+        value = platform_image()
+        mutate(value)
+        completed = invoke(tmp_path, qualification(), platform_provenance(), value)
         assert completed.returncode != 0, name
