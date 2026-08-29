@@ -24,6 +24,11 @@ TOP_LEVEL_KEYS = {
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 VERSION = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
+PROVENANCE_PLATFORMS = {"linux/amd64", "linux/arm64"}
+PROVENANCE_BUILD_TYPE = (
+    "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md"
+)
+PROVENANCE_SOURCE = "https://github.com/firestige/workflow-self-recursive"
 
 
 class QualificationError(RuntimeError):
@@ -65,12 +70,33 @@ def validate(
     return {"authorityRevision": authority["revision"], "ociDigest": digest, "status": "PASS"}
 
 
+def validate_provenance(
+    value: dict[str, Any], *, authority_revision: str, product_commit: str
+) -> None:
+    try:
+        if set(value) != PROVENANCE_PLATFORMS:
+            raise QualificationError("EVOLUTION_IMAGE_PROVENANCE_INVALID")
+        for platform in sorted(PROVENANCE_PLATFORMS):
+            build = value[platform]["SLSA"]["buildDefinition"]
+            arguments = build["externalParameters"]["request"]["root"]["request"]["args"]
+            if (
+                build["buildType"] != PROVENANCE_BUILD_TYPE
+                or arguments["vcs:source"] != PROVENANCE_SOURCE
+                or arguments["vcs:revision"] != authority_revision
+                or arguments["build-arg:WSR_RELEASE_REVISION"] != product_commit
+            ):
+                raise QualificationError("EVOLUTION_IMAGE_PROVENANCE_INVALID")
+    except (KeyError, TypeError) as error:
+        raise QualificationError("EVOLUTION_IMAGE_PROVENANCE_INVALID") from error
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("qualification", type=Path)
     parser.add_argument("--candidate-tag", required=True)
     parser.add_argument("--final-tag", required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--provenance", type=Path)
     args = parser.parse_args()
     try:
         value = json.loads(args.qualification.read_text(encoding="utf-8"))
@@ -82,6 +108,15 @@ def main() -> None:
             final_tag=args.final_tag,
             commit=args.commit,
         )
+        if args.provenance is not None:
+            provenance = json.loads(args.provenance.read_text(encoding="utf-8"))
+            if not isinstance(provenance, dict):
+                raise QualificationError("EVOLUTION_IMAGE_PROVENANCE_INVALID")
+            validate_provenance(
+                provenance,
+                authority_revision=result["authorityRevision"],
+                product_commit=args.commit,
+            )
     except (OSError, json.JSONDecodeError, QualificationError) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, separators=(",", ":"), sort_keys=True))
