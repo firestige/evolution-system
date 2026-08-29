@@ -93,9 +93,6 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           IMAGE="ghcr.io/firestige/wsr-evolution:$CANDIDATE_TAG"
           if docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' > "$RUNNER_TEMP/manifest.json" 2>/dev/null; then
-            docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}' > "$RUNNER_TEMP/image-config.json"
-            test "$(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$RUNNER_TEMP/image-config.json")" = "https://github.com/firestige/evolution-system"
-            test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$RUNNER_TEMP/image-config.json")" = "$PRODUCT_COMMIT"
             DIGEST="$(jq -er .digest "$RUNNER_TEMP/manifest.json")"
           else
             docker buildx build --push \
@@ -114,8 +111,6 @@ jobs:
             --format '{{json .Manifest}}' > "$RUNNER_TEMP/qualified-image-manifest.json"
           docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$DIGEST" \
             --format '{{json .Image}}' > "$RUNNER_TEMP/qualified-image-config.json"
-          test "$(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$RUNNER_TEMP/qualified-image-config.json")" = "https://github.com/firestige/evolution-system"
-          test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$RUNNER_TEMP/qualified-image-config.json")" = "$PRODUCT_COMMIT"
           jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] |
             (index("amd64") != null and index("arm64") != null)' \
             "$RUNNER_TEMP/qualified-image-manifest.json" >/dev/null
@@ -137,7 +132,8 @@ jobs:
           python evolution-system/release/validate_image_qualification.py \
             "$RUNNER_TEMP/release-qualification.json" \
             --candidate-tag "$CANDIDATE_TAG" --final-tag "$VERSION" --commit "$PRODUCT_COMMIT" \
-            --provenance "$RUNNER_TEMP/provenance.json" >/dev/null
+            --provenance "$RUNNER_TEMP/provenance.json" \
+            --image-config "$RUNNER_TEMP/qualified-image-config.json" >/dev/null
 
       - name: Mint short-lived release App token after qualification
         id: release-app-token

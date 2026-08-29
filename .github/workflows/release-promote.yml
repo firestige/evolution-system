@@ -76,8 +76,6 @@ jobs:
           test "$REMOTE_DIGEST" = "$CANDIDATE_DIGEST"
           docker buildx imagetools inspect "ghcr.io/firestige/wsr-evolution@$CANDIDATE_DIGEST" \
             --format '{{json .Image}}' > "$RUNNER_TEMP/candidate-image.json"
-          test "$(jq -r '.config.Labels["org.opencontainers.image.source"] // empty' "$RUNNER_TEMP/candidate-image.json")" = "https://github.com/firestige/evolution-system"
-          test "$(jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' "$RUNNER_TEMP/candidate-image.json")" = "$EXPECTED_COMMIT"
           jq -e '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] |
             (index("amd64") != null and index("arm64") != null)' \
             "$RUNNER_TEMP/candidate-manifest.json" >/dev/null
@@ -85,7 +83,8 @@ jobs:
             --format '{{json .Provenance}}' > "$RUNNER_TEMP/candidate-provenance.json"
           python release/validate_image_qualification.py "$QUALIFICATION" \
             --candidate-tag "$CANDIDATE_TAG" --final-tag "$FINAL_TAG" --commit "$EXPECTED_COMMIT" \
-            --provenance "$RUNNER_TEMP/candidate-provenance.json" >/dev/null
+            --provenance "$RUNNER_TEMP/candidate-provenance.json" \
+            --image-config "$RUNNER_TEMP/candidate-image.json" >/dev/null
 
       - name: Attach stable tag to the exact candidate digest
         env:

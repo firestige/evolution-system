@@ -34,8 +34,7 @@ def test_release_image_has_exact_bases_identity_and_multi_platform_provenance() 
     assert "--sbom=true" in workflow
     assert "docker buildx imagetools inspect" in workflow
     assert 'index("amd64") != null and index("arm64") != null' in workflow
-    assert 'config.Labels["org.opencontainers.image.source"]' in workflow
-    assert 'config.Labels["org.opencontainers.image.revision"]' in workflow
+    assert ".config.Labels" not in workflow
 
 
 def test_release_image_builds_from_exact_superproject_authority() -> None:
@@ -68,6 +67,7 @@ def test_candidate_persists_exact_qualification_for_later_promotion() -> None:
     assert '"provenance":{"mode":"max","status":"PASS"}' in workflow
     assert "evolution-system/release/validate_image_qualification.py" in workflow
     assert '--provenance "$RUNNER_TEMP/provenance.json"' in workflow
+    assert '--image-config "$RUNNER_TEMP/qualified-image-config.json"' in workflow
     assert ".SLSA.buildDefinition" not in workflow
 
 
@@ -79,8 +79,7 @@ def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> 
     assert ":latest" not in workflow
     assert 'CANDIDATE_DIGEST="$(jq -er .ociDigest' in workflow
     assert 'test "$REMOTE_DIGEST" = "$CANDIDATE_DIGEST"' in workflow
-    assert 'config.Labels["org.opencontainers.image.source"]' in workflow
-    assert 'config.Labels["org.opencontainers.image.revision"]' in workflow
+    assert ".config.Labels" not in workflow
     assert 'index("amd64") != null and index("arm64") != null' in workflow
     assert "--format '{{json .Provenance}}'" in workflow
     assert "docker buildx imagetools create" in workflow
@@ -89,4 +88,5 @@ def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> 
     assert "actions/create-github-app-token@" in workflow
     assert "release/validate_image_qualification.py" in workflow
     assert '--provenance "$RUNNER_TEMP/candidate-provenance.json"' in workflow
+    assert '--image-config "$RUNNER_TEMP/candidate-image.json"' in workflow
     assert ".SLSA.buildDefinition" not in workflow

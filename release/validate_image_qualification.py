@@ -90,6 +90,22 @@ def validate_provenance(
         raise QualificationError("EVOLUTION_IMAGE_PROVENANCE_INVALID") from error
 
 
+def validate_image_config(value: dict[str, Any], *, product_commit: str) -> None:
+    try:
+        if set(value) != PROVENANCE_PLATFORMS:
+            raise QualificationError("EVOLUTION_IMAGE_CONFIG_INVALID")
+        for platform in sorted(PROVENANCE_PLATFORMS):
+            labels = value[platform]["config"]["Labels"]
+            if (
+                labels["org.opencontainers.image.source"]
+                != "https://github.com/firestige/evolution-system"
+                or labels["org.opencontainers.image.revision"] != product_commit
+            ):
+                raise QualificationError("EVOLUTION_IMAGE_CONFIG_INVALID")
+    except (KeyError, TypeError) as error:
+        raise QualificationError("EVOLUTION_IMAGE_CONFIG_INVALID") from error
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("qualification", type=Path)
@@ -97,6 +113,7 @@ def main() -> None:
     parser.add_argument("--final-tag", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--provenance", type=Path)
+    parser.add_argument("--image-config", type=Path)
     args = parser.parse_args()
     try:
         value = json.loads(args.qualification.read_text(encoding="utf-8"))
@@ -108,7 +125,9 @@ def main() -> None:
             final_tag=args.final_tag,
             commit=args.commit,
         )
-        if args.provenance is not None:
+        if (args.provenance is None) != (args.image_config is None):
+            raise QualificationError("EVOLUTION_IMAGE_REMOTE_QUALIFICATION_INCOMPLETE")
+        if args.provenance is not None and args.image_config is not None:
             provenance = json.loads(args.provenance.read_text(encoding="utf-8"))
             if not isinstance(provenance, dict):
                 raise QualificationError("EVOLUTION_IMAGE_PROVENANCE_INVALID")
@@ -117,6 +136,10 @@ def main() -> None:
                 authority_revision=result["authorityRevision"],
                 product_commit=args.commit,
             )
+            image_config = json.loads(args.image_config.read_text(encoding="utf-8"))
+            if not isinstance(image_config, dict):
+                raise QualificationError("EVOLUTION_IMAGE_CONFIG_INVALID")
+            validate_image_config(image_config, product_commit=args.commit)
     except (OSError, json.JSONDecodeError, QualificationError) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, separators=(",", ":"), sort_keys=True))
