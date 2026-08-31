@@ -271,9 +271,24 @@ class _ManifestRole(_ClosedModel):
     role_prompt_identity: str = Field(min_length=1, max_length=128)
     role_prompt_digest: Sha256Digest
     agent_provider_id: str = Field(min_length=1, max_length=128)
+    agent_provider_version: str = Field(
+        pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+    )
+    agent_provider_adapter_key: str = Field(min_length=1, max_length=128)
+    agent_provider_descriptor_digest: Sha256Digest
+    required_capabilities: tuple[str, ...] = Field(min_length=1, max_length=128)
     model_provider_id: str = Field(min_length=1, max_length=128)
     model_id: str = Field(min_length=1, max_length=128)
     resolution_source: Literal["REPOSITORY", "EXECUTION_DEFAULT"]
+
+    @model_validator(mode="after")
+    def exact_required_capabilities(self) -> Self:
+        capabilities = self.required_capabilities
+        if any(
+            len(value) < 1 or len(value) > 128 for value in capabilities
+        ) or capabilities != tuple(sorted(set(capabilities), key=lambda value: value.encode())):
+            raise ValueError("required capabilities must be unique and bytewise sorted")
+        return self
 
 
 class _ManifestProjection(_ClosedModel):
@@ -296,6 +311,10 @@ class _ManifestProjection(_ClosedModel):
                 "rolePromptIdentity": role.role_prompt_identity,
                 "rolePromptDigest": role.role_prompt_digest,
                 "agentProviderId": role.agent_provider_id,
+                "agentProviderVersion": role.agent_provider_version,
+                "agentProviderAdapterKey": role.agent_provider_adapter_key,
+                "agentProviderDescriptorDigest": role.agent_provider_descriptor_digest,
+                "requiredCapabilities": list(role.required_capabilities),
                 "modelProviderId": role.model_provider_id,
                 "modelId": role.model_id,
                 "resolutionSource": role.resolution_source,
@@ -427,7 +446,18 @@ class EvidenceHttpClient:
             repository_document_state=repository.document_state,
             repository_document_digest=repository.document_digest,
             resolved_map_digest=repository.resolved_map_digest,
-            roles=tuple(ManifestRoleBinding(**role.model_dump()) for role in manifest.roles),
+            roles=tuple(
+                ManifestRoleBinding(
+                    role_id=role.role_id,
+                    role_prompt_identity=role.role_prompt_identity,
+                    role_prompt_digest=role.role_prompt_digest,
+                    agent_provider_id=role.agent_provider_id,
+                    model_provider_id=role.model_provider_id,
+                    model_id=role.model_id,
+                    resolution_source=role.resolution_source,
+                )
+                for role in manifest.roles
+            ),
             accepted_digest=envelope.provenance.accepted_digest,
             profile_version=envelope.provenance.profile_version,
             source_identity=_source_identity(envelope.provenance.source),
