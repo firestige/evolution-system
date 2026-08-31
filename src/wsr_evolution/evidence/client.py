@@ -284,10 +284,9 @@ class _ManifestRole(_ClosedModel):
     @model_validator(mode="after")
     def exact_required_capabilities(self) -> Self:
         capabilities = self.required_capabilities
-        if (
-            any(len(value) < 1 or len(value) > 128 for value in capabilities)
-            or capabilities != tuple(sorted(set(capabilities), key=lambda value: value.encode()))
-        ):
+        if any(
+            len(value) < 1 or len(value) > 128 for value in capabilities
+        ) or capabilities != tuple(sorted(set(capabilities), key=lambda value: value.encode())):
             raise ValueError("required capabilities must be unique and bytewise sorted")
         return self
 
