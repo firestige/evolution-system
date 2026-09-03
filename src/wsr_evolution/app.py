@@ -30,7 +30,7 @@ def create_app(service: object) -> FastAPI:
     compute_service = cast(ComputeService, service)
     app = FastAPI(
         title="wsr-evolution",
-        version="0.1.0",
+        version="0.1.1",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
