@@ -54,7 +54,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
           test "$(git -C release-publisher rev-parse HEAD)" = "$PUBLISHER_REVISION"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Download and validate durable candidate qualification
         env:
@@ -133,9 +133,9 @@ jobs:
 
       - name: Mint short-lived release App token for final metadata publication
         id: release-app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.WSR_RELEASE_APP_ID }}
+          client-id: ${{ vars.WSR_RELEASE_CLIENT_ID }}
           private-key: ${{ secrets.WSR_RELEASE_APP_PRIVATE_KEY }}
           owner: firestige
           repositories: wsr-evolution

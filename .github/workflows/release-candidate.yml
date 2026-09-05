@@ -1,35 +1,9 @@
 name: Evolution image release candidate
 
 on:
-  workflow_dispatch:
-    inputs:
-      candidate_tag:
-        description: RC image tag, for example 0.1.0-rc.1
-        required: true
-        type: string
-      authority_ref:
-        description: Exact superproject ref containing this Evolution commit and its Workflow checker
-        required: true
-        type: string
-      product_commit:
-        description: Exact Evolution commit pinned by the superproject authority
-        required: true
-        type: string
-  workflow_call:
-    inputs:
-      candidate_tag:
-        required: true
-        type: string
-      authority_ref:
-        required: true
-        type: string
-      product_commit:
-        required: true
-        type: string
-    outputs:
-      image:
-        description: Immutable qualified OCI coordinate
-        value: ${{ jobs.qualify-and-publish.outputs.image }}
+  push:
+    branches:
+      - release/next
 
 permissions:
   contents: read
@@ -46,21 +20,39 @@ jobs:
     outputs:
       image: ${{ steps.image.outputs.coordinate }}
     steps:
+      - name: Verify release trigger branch
+        run: test "$GITHUB_REF_NAME" = "release/next"
+
+      - name: Resolve immutable release request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/contents/release/request.json?ref=$GITHUB_SHA" \
+            --jq .content | base64 --decode > "$RUNNER_TEMP/release-request.json"
+          CANDIDATE_TAG="$(jq -er .candidate_tag "$RUNNER_TEMP/release-request.json")"
+          AUTHORITY_REF="$(jq -er .authority_ref "$RUNNER_TEMP/release-request.json")"
+          PRODUCT_COMMIT="$(jq -er .product_commit "$RUNNER_TEMP/release-request.json")"
+          test -n "$CANDIDATE_TAG" && test -n "$AUTHORITY_REF" && test -n "$PRODUCT_COMMIT"
+          echo "candidate_tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
+          echo "authority_ref=$AUTHORITY_REF" >> "$GITHUB_OUTPUT"
+          echo "product_commit=$PRODUCT_COMMIT" >> "$GITHUB_OUTPUT"
+
       - name: Checkout exact superproject authority
         uses: actions/checkout@v6
         with:
           repository: firestige/workflow-self-recursive
-          ref: ${{ inputs.authority_ref }}
+          ref: ${{ steps.request.outputs.authority_ref }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Verify exact Evolution product and candidate coordinate
         id: candidate
         env:
-          AUTHORITY_REF: ${{ inputs.authority_ref }}
+          AUTHORITY_REF: ${{ steps.request.outputs.authority_ref }}
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
-          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+          CANDIDATE_TAG: ${{ steps.request.outputs.candidate_tag }}
+          PRODUCT_COMMIT: ${{ steps.request.outputs.product_commit }}
         run: |
           test "$(git -C evolution-system rev-parse HEAD)" = "$PRODUCT_COMMIT"
           case "$PRODUCT_COMMIT" in ????????????????????????????????????????) ;; *) exit 1 ;; esac
@@ -93,14 +85,14 @@ jobs:
           PUBLISHER_REVISION: ${{ github.workflow_sha }}
         run: test "$(git -C release-publisher rev-parse HEAD)" = "$PUBLISHER_REVISION"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Resolve or publish immutable candidate image
         id: image
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
-          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+          CANDIDATE_TAG: ${{ steps.request.outputs.candidate_tag }}
+          PRODUCT_COMMIT: ${{ steps.request.outputs.product_commit }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           IMAGE="ghcr.io/firestige/wsr-evolution:$CANDIDATE_TAG"
@@ -132,10 +124,10 @@ jobs:
 
       - name: Build durable candidate qualification metadata
         env:
-          AUTHORITY_REF: ${{ inputs.authority_ref }}
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          AUTHORITY_REF: ${{ steps.request.outputs.authority_ref }}
+          CANDIDATE_TAG: ${{ steps.request.outputs.candidate_tag }}
           DIGEST_COORDINATE: ${{ steps.image.outputs.coordinate }}
-          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+          PRODUCT_COMMIT: ${{ steps.request.outputs.product_commit }}
           PUBLISHER_REVISION: ${{ github.workflow_sha }}
           VERSION: ${{ steps.candidate.outputs.version }}
         run: |
@@ -149,9 +141,9 @@ jobs:
 
       - name: Mint short-lived release App token after qualification
         id: release-app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.WSR_RELEASE_APP_ID }}
+          client-id: ${{ vars.WSR_RELEASE_CLIENT_ID }}
           private-key: ${{ secrets.WSR_RELEASE_APP_PRIVATE_KEY }}
           owner: firestige
           repositories: wsr-evolution
@@ -160,9 +152,9 @@ jobs:
 
       - name: Create or resume exact candidate Release
         env:
-          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          CANDIDATE_TAG: ${{ steps.request.outputs.candidate_tag }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          PRODUCT_COMMIT: ${{ inputs.product_commit }}
+          PRODUCT_COMMIT: ${{ steps.request.outputs.product_commit }}
           RELEASE_EXISTS: ${{ steps.candidate.outputs.exists }}
         run: |
           if test "$RELEASE_EXISTS" != true; then

@@ -47,12 +47,14 @@ def test_release_image_builds_from_exact_superproject_authority() -> None:
     assert "--file evolution-system/Dockerfile" in workflow
 
 
-def test_reusable_release_does_not_confuse_caller_sha_with_product_commit() -> None:
+def test_release_next_request_does_not_confuse_publisher_sha_with_product_commit() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release-candidate.yml").read_text()
 
-    assert "product_commit:" in workflow
-    assert "PRODUCT_COMMIT: ${{ inputs.product_commit }}" in workflow
+    assert "release/request.json" in workflow
+    assert "PRODUCT_COMMIT: ${{ steps.request.outputs.product_commit }}" in workflow
     assert "PRODUCT_COMMIT: ${{ github.sha }}" not in workflow
+    assert "workflow_dispatch:" not in workflow
+    assert "workflow_call:" not in workflow
 
 
 def test_candidate_persists_exact_qualification_for_later_promotion() -> None:
@@ -62,6 +64,11 @@ def test_candidate_persists_exact_qualification_for_later_promotion() -> None:
     assert 'gh release create "$CANDIDATE_TAG"' in workflow
     assert "--prerelease" in workflow
     assert "actions/create-github-app-token@" in workflow
+    assert "actions/create-github-app-token@v3" in workflow
+    assert "client-id: ${{ vars.WSR_RELEASE_CLIENT_ID }}" in workflow
+    assert "app-id:" not in workflow
+    assert "docker/setup-buildx-action@v4" in workflow
+    assert "docker/setup-buildx-action@v3" not in workflow
     assert '"ociDigest":digest' in workflow
     assert '"platforms":["linux/amd64","linux/arm64"]' in workflow
     assert '"provenance":{"mode":"max","status":"PASS"}' in workflow
@@ -86,6 +93,11 @@ def test_stable_promotion_retags_only_the_exact_qualified_candidate_digest() -> 
     assert 'test "$STABLE_DIGEST" = "$CANDIDATE_DIGEST"' in workflow
     assert "stable-qualification.json" in workflow
     assert "actions/create-github-app-token@" in workflow
+    assert "actions/create-github-app-token@v3" in workflow
+    assert "client-id: ${{ vars.WSR_RELEASE_CLIENT_ID }}" in workflow
+    assert "app-id:" not in workflow
+    assert "docker/setup-buildx-action@v4" in workflow
+    assert "docker/setup-buildx-action@v3" not in workflow
     assert "release-publisher/release/validate_image_qualification.py" in workflow
     assert '--provenance "$RUNNER_TEMP/candidate-provenance.json"' in workflow
     assert '--image-config "$RUNNER_TEMP/candidate-image.json"' in workflow
